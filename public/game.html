@@ -994,6 +994,7 @@
     jetRing:    4,                          // patrol circle, in tile rings
     jetSpeed:   0.60,                       // radians of arc per second
     jetTurn:    2.2,                        // radians per second of heading change
+    jetNoseLead: 0.55,                      // radians the nose angles into a full-rate turn
     jetClimb:   1.00,
     jetCruise:  0.16,                       // idle altitude
     jetFloor:   0.06,                       // never dives below this
@@ -1299,7 +1300,7 @@
   const fA1 = new THREE.Vector3(), fA2 = new THREE.Vector3(), fWant = new THREE.Vector3(),
         fAxis = new THREE.Vector3(), fQ = new THREE.Quaternion(), fPos = new THREE.Vector3(),
         fX = new THREE.Vector3(), fY = new THREE.Vector3(), fZ = new THREE.Vector3(),
-        fBasis = new THREE.Matrix4(), fRoll = new THREE.Quaternion();
+        fBasis = new THREE.Matrix4(), fRoll = new THREE.Quaternion(), fLead = new THREE.Quaternion();
 
   function placeFighter(ci) {
     if (fighters.length >= MAX_TURRETS) return null;
@@ -1433,6 +1434,13 @@
         fX.crossVectors(fY, fZ).normalize();
         fBasis.makeBasis(fX, fY, fZ);
         fQ.setFromRotationMatrix(fBasis);
+        // The velocity is always exactly along the heading, so without help
+        // the nose stays tangent to the path and a turning jet reads as
+        // sliding sideways about its own centre. Yawing the VISUAL ahead of
+        // the velocity by the smoothed turn rate makes the nose angle into
+        // the turn the way an aircraft's does; the flight path is untouched.
+        fLead.setFromAxisAngle(f.dir, f.bank * BAL.jetNoseLead);
+        fQ.premultiply(fLead);
         fRoll.setFromAxisAngle(fZ, -f.bank);
         fQ.premultiply(fRoll);
         mScale.setScalar(f.k);
