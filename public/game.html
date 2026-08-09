@@ -978,15 +978,17 @@
     enemies: {
       viper: { hp: 1.0,  speed: 1.0,  dmg: 1.0, pay: 1, size: 0.53 },
       hulk:  { hp: 3.2,  speed: 0.62, dmg: 2.0, pay: 3, size: 0.80, shield: 0.5 },
-      dart:  { hp: 0.55, speed: 1.7,  dmg: 1.0, pay: 2, size: 0.42 }
+      dart:  { hp: 0.55, speed: 0.85, dmg: 1.0, pay: 2, size: 0.42 }
     },
     dartFrom: 4,                            // first wave fast darts appear
     hulkFrom: 7,                            // first wave armoured hulks appear
     hulkFrac: w => Math.min(0.35, 0.04 + w * 0.02),   // share of the wave
     dartFrac: w => Math.min(0.30, 0.03 + w * 0.02),
-    // ---- dart combat. Darts are interceptor hunters: while any player
-    //      fighter flies, a dart abandons its landing run to chase and
-    //      shoot it, and only proceeds groundward once the sky is clear.
+    // ---- dart combat. Darts are interceptor hunters: while a player
+    //      fighter flies INSIDE the dart's own landing zone, the dart
+    //      abandons its landing run to chase and shoot it, then goes in
+    //      to land once its zone's sky is clear. Fighters elsewhere on
+    //      the planet are ignored.
     dartHunt:  0.70,                        // radians/s a dart closes on a fighter
     dartClimb: 0.60,                        // radii/s it matches altitude
     dartReach: 4.5,                         // firing range, tile inradii (outranges a jet)
@@ -1310,7 +1312,8 @@
   const fA1 = new THREE.Vector3(), fA2 = new THREE.Vector3(), fWant = new THREE.Vector3(),
         fAxis = new THREE.Vector3(), fQ = new THREE.Quaternion(), fPos = new THREE.Vector3(),
         fX = new THREE.Vector3(), fY = new THREE.Vector3(), fZ = new THREE.Vector3(),
-        fBasis = new THREE.Matrix4(), fRoll = new THREE.Quaternion(), fLead = new THREE.Quaternion();
+        fBasis = new THREE.Matrix4(), fRoll = new THREE.Quaternion(),
+        fLead = new THREE.Quaternion(), fPitch = new THREE.Quaternion();
 
   function placeFighter(ci) {
     if (fighters.length >= MAX_TURRETS) return null;
@@ -1341,7 +1344,8 @@
       ceiling: BAL.jetCeiling,
       dmg: BAL.jetDmg, level: 1,
       hp: BAL.jetHp, incoming: 0, alive: true, pay: 0,   // darts hunt it
-      cool: 0, bank: 0, emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
+      cool: 0, bank: 0, pitch: 0,
+      emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
     };
     fighters.push(jf);
     fighterAt.set(ci, jf);
@@ -1436,8 +1440,12 @@
         }
       }
 
-      const dAlt = wantAlt - f.alt;
-      f.alt += THREE.MathUtils.clamp(dAlt, -BAL.jetClimb * dt, BAL.jetClimb * dt);
+      const dv = THREE.MathUtils.clamp(wantAlt - f.alt, -BAL.jetClimb * dt, BAL.jetClimb * dt);
+      f.alt += dv;
+      // pitch follows the actual climb rate, so a diving jet noses down
+      // into the dive instead of sliding down flat
+      const pitchGoal = Math.atan2(dv / Math.max(dt, 1e-4), BAL.jetSpeed * (RADIUS + f.alt));
+      f.pitch += (pitchGoal - f.pitch) * Math.min(1, dt * 5);
 
       // guns are short ranged on purpose: it has to actually get there
       fPos.copy(f.dir).multiplyScalar(RADIUS + f.alt);
@@ -1465,6 +1473,9 @@
         // the turn the way an aircraft's does; the flight path is untouched.
         fLead.setFromAxisAngle(f.dir, f.bank * BAL.jetNoseLead);
         fQ.premultiply(fLead);
+        // nose up in a climb, down in a dive, matching the real climb rate
+        fPitch.setFromAxisAngle(fX, f.pitch);
+        fQ.premultiply(fPitch);
         fRoll.setFromAxisAngle(fZ, -f.bank);
         fQ.premultiply(fRoll);
         mScale.setScalar(f.k);
@@ -2614,6 +2625,7 @@
     aliens.push({
       ci: spec.ci,
       type: spec.type,
+      ship,                                     // whose zone it belongs to
       dir: ship.bearing.clone(),                // starts under its own ship
       tgt: tgt.clone(),
       turn: sweep / Math.max(fall * BAL.converge, 0.001),   // arrives over its
@@ -2676,37 +2688,41 @@
     for (const a of aliens) {
       if (!a.alive) continue;
 
-      // Darts fight before they land: while any fighter flies, a dart
-      // breaks off to chase the nearest one, matches its altitude, and
-      // shoots. It only resumes its landing run over an empty sky.
+      // Darts fight before they land: while a fighter flies inside this
+      // dart's own landing zone, it breaks off to chase the nearest one,
+      // matches its altitude, and shoots. Fighters elsewhere on the planet
+      // are none of its business; over a clear zone it goes in to land.
       a.hunting = null;
       if (a.type === 'dart' && fighters.length) {
         let tgt = null, near = Infinity;
         for (const jf of fighters) {
+          if (jf.dir.angleTo(a.ship.bearing) > a.ship.ang) continue;
           const d = a.dir.angleTo(jf.dir);
           if (d < near) { near = d; tgt = jf; }
         }
         a.hunting = tgt;
-        if (near > 1e-5) {
-          fAxis.crossVectors(a.dir, tgt.dir);
-          if (fAxis.lengthSq() > 1e-12) {
-            fAxis.normalize();
-            fQ.setFromAxisAngle(fAxis, Math.min(near, BAL.dartHunt * dt));
-            a.dir.applyQuaternion(fQ).normalize();
+        if (tgt) {
+          if (near > 1e-5) {
+            fAxis.crossVectors(a.dir, tgt.dir);
+            if (fAxis.lengthSq() > 1e-12) {
+              fAxis.normalize();
+              fQ.setFromAxisAngle(fAxis, Math.min(near, BAL.dartHunt * dt));
+              a.dir.applyQuaternion(fQ).normalize();
+            }
           }
+          a.alt += THREE.MathUtils.clamp(tgt.alt - a.alt, -BAL.dartClimb * dt, BAL.dartClimb * dt);
+          a.cool = (a.cool || 0) - dt;
+          aim.copy(a.dir).multiplyScalar(RADIUS + a.alt);          // the dart
+          fA2.copy(tgt.dir).multiplyScalar(RADIUS + tgt.alt);      // its prey
+          if (a.cool <= 0 && aim.distanceTo(fA2) < BAL.dartReach * tiles.meanInr) {
+            a.cool = BAL.dartRate;
+            // straight slugs against a fast jet: the dart leads its shot too
+            fA1.copy(predictFighter(tgt, aim.distanceTo(fA2) / BAL.slugSpeed, pPred)).sub(aim).normalize();
+            fireShell(aim, fA1, tgt, BAL.dartDmg);
+            muzzleFlash(aim);
+          }
+          continue;
         }
-        a.alt += THREE.MathUtils.clamp(tgt.alt - a.alt, -BAL.dartClimb * dt, BAL.dartClimb * dt);
-        a.cool = (a.cool || 0) - dt;
-        aim.copy(a.dir).multiplyScalar(RADIUS + a.alt);          // the dart
-        fA2.copy(tgt.dir).multiplyScalar(RADIUS + tgt.alt);      // its prey
-        if (a.cool <= 0 && aim.distanceTo(fA2) < BAL.dartReach * tiles.meanInr) {
-          a.cool = BAL.dartRate;
-          // straight slugs against a fast jet: the dart leads its shot too
-          fA1.copy(predictFighter(tgt, aim.distanceTo(fA2) / BAL.slugSpeed, pPred)).sub(aim).normalize();
-          fireShell(aim, fA1, tgt, BAL.dartDmg);
-          muzzleFlash(aim);
-        }
-        continue;
       }
 
       const rem = a.dir.angleTo(a.tgt);
