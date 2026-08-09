@@ -1671,6 +1671,7 @@
   function hideMothers() {
     for (const m of motherMeshes) m.visible = false;
     for (const r of zoneRings) r.visible = false;
+    for (const c of zoneCaps) c.visible = false;
   }
 
   // =====================================================================
@@ -2509,6 +2510,60 @@
     zoneRings.push(r);
   }
 
+  //  Inside each zone, faint red rings ripple INWARD from the rim toward
+  //  the centre. When several huge zones overlap, the direction of travel
+  //  is what tells you which side of a line is inside: ripples always run
+  //  away from the boundary you are looking at, toward its own middle.
+  const CAP_K = 18, CAP_S = 64, CAP_FLO = 0.12;   // radial rings, segments, innermost fraction
+  const rippleMat = new THREE.ShaderMaterial({
+    uniforms: { uT: { value: 0 } },
+    transparent: true,
+    depthWrite: false,
+    vertexShader: `
+      attribute float frac;
+      varying float vF;
+      void main() {
+        vF = frac;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float uT;
+      varying float vF;
+      void main() {
+        // three bands per zone, drifting toward lower frac as uT grows
+        float d = abs(fract(vF * 3.0 + uT * 0.4) - 0.5);
+        float ring = smoothstep(0.10, 0.02, d);
+        float a = ring * 0.28 * smoothstep(0.08, 0.35, vF);   // dissolve before the middle
+        if (a < 0.003) discard;
+        gl_FragColor = vec4(1.0, 0.184, 0.184, a);
+      }`
+  });
+  const capIdx = [];
+  for (let j = 0; j < CAP_K - 1; j++) {
+    for (let i = 0; i < CAP_S; i++) {
+      const a = j * CAP_S + i, b = j * CAP_S + (i + 1) % CAP_S;
+      const c = a + CAP_S, d = b + CAP_S;
+      capIdx.push(a, b, c, b, d, c);
+    }
+  }
+  const zoneCaps = [];
+  for (let i = 0; i < MAX_SHIPS; i++) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(CAP_K * CAP_S * 3), 3));
+    const fr = new Float32Array(CAP_K * CAP_S);
+    for (let j = 0; j < CAP_K; j++) {
+      const f = CAP_FLO + (1 - CAP_FLO) * j / (CAP_K - 1);
+      for (let s = 0; s < CAP_S; s++) fr[j * CAP_S + s] = f;
+    }
+    g.setAttribute('frac', new THREE.BufferAttribute(fr, 1));
+    g.setIndex(capIdx);
+    const m = new THREE.Mesh(g, rippleMat);
+    m.frustumCulled = false;
+    m.visible = false;
+    world.add(m);
+    zoneCaps.push(m);
+  }
+
   // The bearing WALKS, it does not teleport. A fresh random point on the
   // sphere every wave made the run a lottery: two zones near each other and
   // your existing turrets carry, two zones apart and you owe a whole new
@@ -2628,7 +2683,10 @@
       G.ships[i].ang = G.zoneAng;
       drawZone(i, G.ships[i].bearing, G.zoneAng);
     }
-    for (let i = G.ships.length; i < MAX_SHIPS; i++) zoneRings[i].visible = false;
+    for (let i = G.ships.length; i < MAX_SHIPS; i++) {
+      zoneRings[i].visible = false;
+      zoneCaps[i].visible = false;
+    }
 
     G.bearing = G.ships[0].bearing;      // the sim and the camera still want one
     placeMothers();
@@ -2668,6 +2726,25 @@
     }
     ring.geometry.attributes.position.needsUpdate = true;
     ring.visible = true;
+
+    // the ripple cap under the ring: same basis, graded cone angles
+    const cap = zoneCaps[idx];
+    const cArr = cap.geometry.attributes.position.array;
+    for (let j = 0; j < CAP_K; j++) {
+      const ph = ang * (CAP_FLO + (1 - CAP_FLO) * j / (CAP_K - 1));
+      const cp = Math.cos(ph), sp = Math.sin(ph);
+      for (let s = 0; s < CAP_S; s++) {
+        const a = (s / CAP_S) * Math.PI * 2;
+        zP.copy(bearing).multiplyScalar(cp)
+          .addScaledVector(zA, sp * Math.cos(a))
+          .addScaledVector(zB, sp * Math.sin(a))
+          .setLength(RADIUS * 1.006);
+        const o = (j * CAP_S + s) * 3;
+        cArr[o] = zP.x; cArr[o + 1] = zP.y; cArr[o + 2] = zP.z;
+      }
+    }
+    cap.geometry.attributes.position.needsUpdate = true;
+    cap.visible = true;
   }
 
   function startWave() {
@@ -4081,6 +4158,8 @@
     zoneMat.opacity = (G.started && !G.over && !G.inWave && !reduced)
       ? 0.2 + 0.8 * (0.5 + 0.5 * Math.sin(now * 0.003))
       : 0.9;
+    // the interior ripples crawl inward; reduced motion holds them still
+    if (!reduced) rippleMat.uniforms.uT.value = now * 0.001;
 
     if (!dragging) {
       if (Math.abs(velX) > 1e-5 || Math.abs(velY) > 1e-5) {
