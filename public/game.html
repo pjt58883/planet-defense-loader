@@ -3543,13 +3543,11 @@
   //
   //  Every button and catalog entry shows the unit's real model: each rig
   //  is assembled from the loaded parts and rendered once to a small
-  //  canvas. Hand-made art dropped into public/assets/ui/<key>.png wins
-  //  over the live render.
+  //  canvas, so the art always matches whatever GLB is actually shipped.
   const thumbs = {};
 
   function setArt(img, key) {
-    img.onerror = () => { img.onerror = null; img.src = thumbs[key]; };
-    img.src = '/assets/ui/' + key + '.png';
+    img.src = thumbs[key];
   }
 
   function makeThumbs(parts) {
