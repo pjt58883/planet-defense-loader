@@ -306,6 +306,7 @@
     <button id="foundryBtn">Build foundry (20)</button>
     <button id="cannonBtn">Build sea cannon (12)</button>
     <button id="batteryBtn">Build missile battery (18)</button>
+    <button id="recoveryBtn">Build recovery team (15)</button>
     <button id="waveBtn">Call wave</button>
     <button id="viewBtn">Surface view</button>
   </div>
@@ -625,7 +626,8 @@
     const N = tiles.cells.length;
     cellType = new Array(N).fill('plain');
     cellDead = new Uint8Array(N);
-    deadPos.length = 0;
+    cellDeadWave = new Int32Array(N).fill(-1);
+    deadTris.clear();
     rebuildDeadMesh();
     cellGeo = new Array(N);
     coast = new Array(N).fill(false);
@@ -998,6 +1000,7 @@
     trailGap:   0.012,                      // distance between smoke puffs
     strayLife:  2.0,                        // seconds a shell with no target keeps going
     batteryCost: 18,
+    recoveryCost: 15,                       // a team to dig one lost tile back out
     batteryRange: 3,                        // rings; no mountain bonus
     batteryCeiling: 1.30,                   // engages higher than any turret
     batteryRate: 2.2, batteryDmg: 30,       // one slow, heavy shell
@@ -1529,6 +1532,7 @@
       if (jetMesh) jetMesh.count = fighters.length;
       return 'FIGHTER LOST';
     }
+    if (removeRecovery(ci)) return 'RECOVERY TEAM LOST';
     return null;
   }
 
@@ -1729,7 +1733,8 @@
   //  it again. Dead ground is the scar a wave leaves behind - integrity
   //  heals nothing back, so the map itself keeps the score.
   let cellDead = null;                 // one flag per cell, set by landings
-  const deadPos = [];                  // accumulated X-marker triangles
+  let cellDeadWave = null;             // wave each dead cell was lost on
+  const deadTris = new Map();          // ci -> X-marker triangles, so a tile can be cleared again
   let deadMesh = null;
   const deadMat = new THREE.MeshBasicMaterial({
     color: 0xff2f2f, transparent: true, opacity: 0.9,
@@ -1738,9 +1743,14 @@
 
   function rebuildDeadMesh() {
     if (deadMesh) { world.remove(deadMesh); deadMesh.geometry.dispose(); deadMesh = null; }
-    if (!deadPos.length) return;
+    if (!deadTris.size) return;
+    let n = 0;
+    for (const a of deadTris.values()) n += a.length;
+    const pos = new Float32Array(n);
+    let o = 0;
+    for (const a of deadTris.values()) { pos.set(a, o); o += a.length; }
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(deadPos), 3));
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     deadMesh = new THREE.Mesh(g, deadMat);
     deadMesh.frustumCulled = false;
     world.add(deadMesh);
@@ -1749,6 +1759,7 @@
   function killHex(ci) {
     if (cellDead[ci]) return;
     cellDead[ci] = 1;
+    cellDeadWave[ci] = G.wave;
 
     const f = tileFit(ci);
     const up = f.up;
@@ -1759,6 +1770,7 @@
 
     // two bars at right angles; each is a short strip of quads projected
     // back onto the sphere so the X hugs the ground instead of chording it
+    const out = [];
     const L = f.fit * 0.82, W = f.fit * 0.16, SEG = 6;
     const dir = new THREE.Vector3(), side = new THREE.Vector3();
     for (const ang of [Math.PI / 4, -Math.PI / 4]) {
@@ -1769,18 +1781,101 @@
       for (let s = 0; s < SEG; s++) {
         const t0 = -L + (2 * L * s) / SEG, t1 = -L + (2 * L * (s + 1)) / SEG;
         const a = p(t0, -W), b = p(t0, W), c = p(t1, W), d = p(t1, -W);
-        deadPos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z,
-                     a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+        out.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z,
+                 a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
       }
     }
+    deadTris.set(ci, new Float32Array(out));
+    rebuildDeadMesh();
+  }
+
+  //  The one way a scar comes back: a recovery team finishes its dig and
+  //  the X is lifted off the tile.
+  function reviveHex(ci) {
+    if (!cellDead[ci]) return;
+    cellDead[ci] = 0;
+    cellDeadWave[ci] = -1;
+    deadTris.delete(ci);
     rebuildDeadMesh();
   }
 
   function clearDead() {
     if (cellDead) cellDead.fill(0);
-    deadPos.length = 0;
+    if (cellDeadWave) cellDeadWave.fill(-1);
+    deadTris.clear();
     rebuildDeadMesh();
   }
+
+  // =====================================================================
+  //  RECOVERY TEAMS
+  //
+  //  The only building that goes on ground the enemy has taken. A team digs
+  //  a crossed-out tile back out, and the dig costs one wave for every wave
+  //  the tile has been lost, so scars you leave alone get more expensive to
+  //  undo. When the timer runs out the X comes off, the team packs up, and
+  //  the tile is buildable ground again.
+  // =====================================================================
+  const RECOV_R = 1.0;                  // footprint divisor, model units
+  const recoveries = [];
+  const recoveryAt = new Map();
+  let recoveryMesh = null;
+  const rQ = new THREE.Quaternion(), rSpin = new THREE.Quaternion();
+
+  function recoveryWavesFor(ci) {
+    const since = cellDeadWave[ci] < 0 ? 1 : G.wave - cellDeadWave[ci];
+    return Math.max(1, since);
+  }
+
+  function rebuildRecoveryMesh() {
+    if (!recoveryMesh) return;
+    for (let i = 0; i < recoveries.length; i++) recoveryMesh.setMatrixAt(i, recoveries[i].mat);
+    recoveryMesh.count = recoveries.length;
+    recoveryMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  function placeRecovery(ci) {
+    if (recoveries.length >= MAX_TURRETS) return null;
+    const f = tileFit(ci);
+    const need = recoveryWavesFor(ci);
+    const r = { ci, kind: 'recovery', level: 1, need, left: need, up: f.up.clone(), mat: new THREE.Matrix4() };
+    recoveries.push(r);
+    recoveryAt.set(ci, r);
+
+    mPos.copy(f.up).multiplyScalar(RADIUS - f.fit * 0.05);
+    rQ.setFromUnitVectors(LOCAL_UP, f.up);
+    rSpin.setFromAxisAngle(LOCAL_UP, Math.random() * Math.PI * 2);
+    rQ.multiply(rSpin);
+    mScale.setScalar(f.fit / RECOV_R);
+    r.mat.compose(mPos, rQ, mScale);
+    rebuildRecoveryMesh();
+    return r;
+  }
+
+  function removeRecovery(ci) {
+    const r = recoveryAt.get(ci);
+    if (!r) return false;
+    recoveries.splice(recoveries.indexOf(r), 1);
+    recoveryAt.delete(ci);
+    rebuildRecoveryMesh();
+    return true;
+  }
+
+  function clearRecoveries() {
+    recoveries.length = 0;
+    recoveryAt.clear();
+    if (recoveryMesh) recoveryMesh.count = 0;
+  }
+
+  //  One tick per wave cleared: finished teams hand their tile back.
+  function tickRecoveries() {
+    let done = 0;
+    for (const r of recoveries.slice()) {
+      r.left--;
+      if (r.left <= 0) { reviveHex(r.ci); removeRecovery(r.ci); done++; }
+    }
+    if (done) say(done === 1 ? 'TILE RECOVERED' : done + ' TILES RECOVERED');
+  }
+
 
   // ---------- descending drops ----------
   const MAX_ALIENS = 400;
@@ -2332,6 +2427,7 @@
     G.breakLeft = BAL.breakTime;
     const pay = BAL.income(G.wave) + foundryIncome();
     G.gold += pay;
+    tickRecoveries();                // a wave survived is a wave of digging
     showSummary(G.wave, G.landed, pay);
     pickBearing();                   // you get the next one straight away
   }
@@ -2493,6 +2589,7 @@
   const foundryBtn = document.getElementById('foundryBtn');
   const cannonBtn = document.getElementById('cannonBtn');
   const batteryBtn = document.getElementById('batteryBtn');
+  const recoveryBtn = document.getElementById('recoveryBtn');
   const waveBtn = document.getElementById('waveBtn');
   let alertUntil = 0;
 
@@ -2524,6 +2621,9 @@
     batteryBtn.textContent = 'Build missile battery (' + BAL.batteryCost + ')';
     batteryBtn.disabled = G.gold < BAL.batteryCost && G.build !== 'battery';
     batteryBtn.setAttribute('aria-pressed', G.build === 'battery' ? 'true' : 'false');
+    recoveryBtn.textContent = 'Build recovery team (' + BAL.recoveryCost + ')';
+    recoveryBtn.disabled = G.gold < BAL.recoveryCost && G.build !== 'recovery';
+    recoveryBtn.setAttribute('aria-pressed', G.build === 'recovery' ? 'true' : 'false');
     if (selCi !== null) refreshUnitCard();
     foundryBtn.disabled = G.gold < BAL.foundryCost && G.build !== 'foundry';
     foundryBtn.setAttribute('aria-pressed', G.build === 'foundry' ? 'true' : 'false');
@@ -2547,6 +2647,7 @@
       : G.build === 'cannon' ? 'Tap a WATER tile to float a sea cannon. Longer reach and a heavier shell than a land turret.'
       : G.build === 'foundry' ? 'Tap a tile to build a foundry. It pays on each wave cleared: mountain 8, desert 7, plain 5, forest 4, swamp 3.'
       : G.build === 'battery' ? 'Tap a land tile to build a missile battery. Slow, heavy shells that burst on impact and damage everything nearby.'
+      : G.build === 'recovery' ? 'Tap a crossed-out tile to send a recovery team. The dig takes one wave for every wave the tile has been lost.'
       : '';
     hint.classList.toggle('gone', !G.build);
   }
@@ -2556,6 +2657,7 @@
   foundryBtn.addEventListener('click', () => setBuild(G.build === 'foundry' ? null : 'foundry'));
   cannonBtn.addEventListener('click', () => setBuild(G.build === 'cannon' ? null : 'cannon'));
   batteryBtn.addEventListener('click', () => setBuild(G.build === 'battery' ? null : 'battery'));
+  recoveryBtn.addEventListener('click', () => setBuild(G.build === 'recovery' ? null : 'recovery'));
   waveBtn.addEventListener('click', () => { if (!G.inWave && !G.over) { G.breakLeft = 0; } });
 
   // ---------- wave summary ----------
@@ -2639,6 +2741,16 @@
       unitDmg.textContent = jf.dmg;
       unitRateRow.style.display = '';
       unitRate.textContent = (1 / BAL.jetRate).toFixed(1) + '/s';
+    } else if (recoveryAt.get(selCi)) {
+      unitName.textContent = 'Recovery team';
+      unitDmgLabel.textContent = 'restores in';
+      unitDmg.textContent = b.left + (b.left === 1 ? ' wave' : ' waves');
+      unitRateRow.style.display = '';
+      unitRate.textContent = b.need + (b.need === 1 ? ' wave dig' : ' wave dig');
+      unitLvl.textContent = '\u2014';
+      unitUpgBtn.textContent = 'No upgrade';
+      unitUpgBtn.disabled = true;
+      return;
     } else {
       unitName.textContent = 'Foundry';
       unitDmgLabel.textContent = 'yield';
@@ -2708,6 +2820,8 @@
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
     battery: ['/assets/battery.glb'],
+    // the recovery team: engineers and their outpost, planted on lost ground
+    recovery: ['/assets/recovery.glb'],
     // projectiles: the railgun slug (turrets, sea cannons) and the battery
     // missile. Both are modelled standing on +Y and are laid onto -Z below.
     slug:    ['/assets/railgun_ammo.glb'],
@@ -2767,6 +2881,10 @@
         geo = new THREE.CylinderGeometry(BATTERY_R * 0.55, BATTERY_R, BATTERY_H, 6);
         geo.translate(0, BATTERY_H / 2, 0);             // base at y=0
         color = 0x7d8a5a; break;
+      case 'recovery':
+        geo = new THREE.BoxGeometry(RECOV_R * 1.2, RECOV_R * 0.7, RECOV_R * 1.2);
+        geo.translate(0, RECOV_R * 0.35, 0);            // base at y=0
+        color = 0x4fd08a; break;
       // projectiles: modelled standing on +Y like their GLBs, ~2 units long,
       // so buildModels can lay either one onto -Z with the same rotation
       case 'slug':
@@ -2803,6 +2921,8 @@
     platMesh = instanced(parts.hover, MAX_TURRETS, true);
     coreMesh = instanced(parts.core, MAX_TURRETS, true);
     batteryMesh = instanced(parts.battery, MAX_TURRETS, false);
+    recoveryMesh = instanced(parts.recovery, MAX_TURRETS, false);
+    rebuildRecoveryMesh();
 
     // both projectiles are authored nose-up (+Y); lay them onto -Z once so
     // updateBullets can just point the instance down its velocity
@@ -2933,6 +3053,18 @@
       else hideUnitCard();
       return;
     }
+    // dead ground is off limits to everything except a recovery team, which
+    // is the only thing that can be built there and the only way back
+    if (G.build === 'recovery') {
+      if (!cellDead[ci]) { say('RECOVERY TEAMS ONLY WORK LOST TILES'); return; }
+      if (recoveryAt.has(ci)) { say('TEAM ALREADY WORKING'); return; }
+      if (recoveries.length >= MAX_TURRETS) { say('RECOVERY LIMIT REACHED'); return; }
+      if (G.gold < BAL.recoveryCost) { say('NOT ENOUGH GOLD'); return; }
+      G.gold -= BAL.recoveryCost;
+      const r = placeRecovery(ci);
+      if (r) say('RECOVERY IN ' + r.need + (r.need === 1 ? ' WAVE' : ' WAVES'));
+      return;
+    }
     if (cellDead[ci]) { say('DEAD GROUND'); return; }
     // a fighter is based on a tile, not built on it, so it can sit over water
     const wet = cellType[ci] === 'lake';
@@ -2991,7 +3123,7 @@
   };
 
   function buildingAt(ci) {
-    return towerAt.get(ci) || fighterAt.get(ci) || foundryAt.get(ci) || null;
+    return towerAt.get(ci) || fighterAt.get(ci) || foundryAt.get(ci) || recoveryAt.get(ci) || null;
   }
 
   function upgradeBase(ci) {
@@ -3000,6 +3132,7 @@
   }
 
   function upgradeAt(ci) {
+    if (recoveryAt.has(ci)) return;          // a dig crew has nothing to level
     const b = buildingAt(ci);
     if (!b || b.level >= BAL.upgradeMax) return;
     const cost = BAL.upgradeCost(upgradeBase(ci), b.level + 1);
@@ -3022,6 +3155,7 @@
     clearTurrets();
     clearFighters();
     clearFoundries();
+    clearRecoveries();
     clearEnemies();
     clearDead();
     resetBullets();
@@ -3277,6 +3411,7 @@
     if (e.key === 'g' || e.key === 'G') setBuild(G.build === 'foundry' ? null : 'foundry');
     if (e.key === 'c' || e.key === 'C') setBuild(G.build === 'cannon' ? null : 'cannon');
     if (e.key === 'm' || e.key === 'M') setBuild(G.build === 'battery' ? null : 'battery');
+    if (e.key === 'x' || e.key === 'X') setBuild(G.build === 'recovery' ? null : 'recovery');
   });
 
   function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
