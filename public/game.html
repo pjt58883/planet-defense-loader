@@ -276,6 +276,8 @@
     <button id="jetBtn">Build fighter (10)</button>
     <button id="foundryBtn">Build foundry (20)</button>
     <button id="cannonBtn">Build sea cannon (12)</button>
+    <button id="batteryBtn">Build missile battery (18)</button>
+    <button id="upgBtn">Upgrade</button>
     <button id="waveBtn">Call wave</button>
     <button id="viewBtn">Surface view</button>
   </div>
@@ -912,7 +914,6 @@
     motherSize: 0.20,                       // length in sphere radii
     shipEvery:  5,                          // waves between each extra mothership
     shipSepMin: 0.85,                       // radians apart they try to stay
-    viperSize:  0.53,                       // length in tile inradii
     converge:   0.60,                       // fraction of the fall spent turning
     flameGap:   0.035,                      // seconds between exhaust puffs
     flameLife:  0.30,                       // how long one puff lasts
@@ -920,8 +921,21 @@
     alienSpeed: w => 0.055 + w * 0.004,       // sphere radii per second
     spawnGap:   0.55,
     income:     w => 5 * w,                 // five per wave cleared, plus the foundries
-    killPay:    1,
     landDamage: 7,
+    // ---- enemy roster. hp/speed/dmg multiply the wave's base numbers; pay
+    //      is the bounty for that type; size is a length in tile inradii.
+    //      Waves are all vipers until the entry waves below, then the mix
+    //      shifts so the late game asks different questions: hulks soak a
+    //      turret's whole magazine, darts outrun its tracking window.
+    enemies: {
+      viper: { hp: 1.0,  speed: 1.0,  dmg: 1.0, pay: 1, size: 0.53 },
+      hulk:  { hp: 3.2,  speed: 0.62, dmg: 2.0, pay: 3, size: 0.80 },
+      dart:  { hp: 0.55, speed: 1.7,  dmg: 1.0, pay: 2, size: 0.42 }
+    },
+    hulkFrom: 4,                            // first wave armoured hulks appear
+    dartFrom: 7,                            // first wave fast darts appear
+    hulkFrac: w => Math.min(0.35, 0.04 + w * 0.02),   // share of the wave
+    dartFrac: w => Math.min(0.30, 0.03 + w * 0.02),
     breakTime:  20,
     summaryTime: 5,                         // seconds the wave report lingers
     startGold:  25,
@@ -943,6 +957,17 @@
     shellSpeed: 1.15,                       // sphere radii per second
     trailGap:   0.012,                      // distance between smoke puffs
     strayLife:  2.0,                        // seconds a shell with no target keeps going
+    batteryCost: 18,
+    batteryRange: 3,                        // rings; no mountain bonus
+    batteryCeiling: 1.30,                   // engages higher than any turret
+    batteryRate: 2.2, batteryDmg: 30,       // one slow, heavy shell
+    splashRadius: 2.2,                      // burst radius, tile inradii
+    splashDmg: 14,                          // dealt to everything else in it
+    upgradeMax: 3,                          // levels a building can reach
+    upgradeCost: (base, lvl) => Math.ceil(base * 0.6 * lvl),   // lvl being bought
+    upgradeDmg: 1.5,                        // per level, anything that shoots
+    upgradeCeil: 0.10,                      // per level, turret-family ceilings
+    upgradeYield: 1.5,                      // per level, foundry income
     driftMin: 0.30, driftMax: 0.85,         // radians the drop zone walks per wave
     autoFace: false,                        // swing the planet to face a new drop zone
     dryWaves: 10,                           // waves that get a mostly-dry landing zone
@@ -1153,7 +1178,7 @@
     const k = f.fit / PAD_R;                   // pad spans the tile edge to edge
 
     const tur = {
-      ci, k, kind: 'turret',
+      ci, k, kind: 'turret', level: 1,
       up: up.clone(),
       seat: up.clone().multiplyScalar(RADIUS + GUN_SEAT * k),
       aimQ: new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up),
@@ -1167,21 +1192,19 @@
     towerAt.set(ci, tur);
 
     if (modelsOK) {
-      const i = towers.length - 1;
       mPos.copy(up).multiplyScalar(RADIUS - f.fit * 0.04);          // sunk a hair
       mQuat.setFromUnitVectors(LOCAL_UP, up);
       mScale.setScalar(k);
       tur.padMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
       rebuildEmplacements();
-      writeGun(tur, i);
     }
     return tur;
   }
 
-  function writeGun(t, i) {
-    if (!modelsOK) return;
+  function writeGun(t) {
+    if (!modelsOK || !(t.gunSlot >= 0)) return;
     mScale.setScalar(t.k);
-    gunMesh.setMatrixAt(i, mMat.compose(t.seat, t.aimQ, mScale));
+    gunMesh.setMatrixAt(t.gunSlot, mMat.compose(t.seat, t.aimQ, mScale));
   }
 
   function clearTurrets() {
@@ -1189,6 +1212,7 @@
     towerAt.clear();
     if (modelsOK) { padMesh.count = 0; gunMesh.count = 0; }
     if (platMesh) { platMesh.count = 0; coreMesh.count = 0; }
+    if (batteryMesh) batteryMesh.count = 0;
   }
 
   // =====================================================================
@@ -1239,6 +1263,7 @@
       alt: BAL.jetCruise,
       k: tiles.meanInr * BAL.jetSize / JET_LEN,
       ceiling: BAL.jetCeiling,
+      dmg: BAL.jetDmg, level: 1,
       cool: 0, bank: 0, emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
     };
     fighters.push(jf);
@@ -1333,7 +1358,7 @@
           f.cool = BAL.jetRate;
           fA2.copy(alienPos).sub(fPos).normalize();
           muzzle.copy(f.head).multiplyScalar(JET_LEN * 0.5 * f.k).add(fPos);
-          fireShell(muzzle, fA2, best, BAL.jetDmg);
+          fireShell(muzzle, fA2, best, f.dmg);
         }
       }
 
@@ -1387,7 +1412,7 @@
     if (foundries.length >= MAX_TURRETS) return null;
     const f = tileFit(ci);
     const rate = ORE[cellType[ci]] || BAL.foundryYield;
-    const fo = { ci, rate, up: f.up.clone(), mat: new THREE.Matrix4() };
+    const fo = { ci, rate, level: 1, up: f.up.clone(), mat: new THREE.Matrix4() };
     foundries.push(fo);
     foundryAt.set(ci, fo);
 
@@ -1442,7 +1467,8 @@
       towers.splice(i, 1);
       towerAt.delete(ci);
       rebuildEmplacements();
-      return kind === 'cannon' ? 'SEA CANNON LOST' : 'TURRET LOST';
+      return kind === 'cannon' ? 'SEA CANNON LOST'
+           : kind === 'battery' ? 'BATTERY LOST' : 'TURRET LOST';
     }
     if (fighterAt.has(ci)) {
       const i = fighters.indexOf(fighterAt.get(ci));
@@ -1539,7 +1565,7 @@
     const seatY = deckY + CORE_SEAT * kc;
 
     const tur = {
-      ci, kind: 'cannon', k: kg,
+      ci, kind: 'cannon', k: kg, level: 1,
       up: up.clone(),
       seat: up.clone().multiplyScalar(seatY),
       aimQ: new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up),
@@ -1561,25 +1587,74 @@
 
     towers.push(tur);
     towerAt.set(ci, tur);
+    rebuildEmplacements();              // also writes the gun, or it would
+    return tur;                         // render at the origin until the first shot
+  }
+
+  // =====================================================================
+  //  MISSILE BATTERY
+  //
+  //  The anti-crowd emplacement. One slow, heavy shell that bursts on
+  //  impact and damages everything near the hit, where a turret only ever
+  //  kills what it aimed at. It engages higher than anything else, so it
+  //  starts working the moment a drop begins - but the shell takes time to
+  //  climb, and against a single fast target most of the burst is wasted.
+  //  Batteries thin a wave out; turrets still finish it.
+  // =====================================================================
+  const BATTERY_R = 1.1;       // placeholder footprint radius, model units
+  const BATTERY_H = 0.9;       // muzzle height, model units
+
+  let batteryMesh = null;
+
+  function placeBattery(ci) {
+    if (towers.length >= MAX_TURRETS) return null;
+    const f = tileFit(ci);
+    const up = f.up;
+    const k = f.fit / BATTERY_R;
+
+    const tur = {
+      ci, kind: 'battery', k, level: 1,
+      up: up.clone(),
+      seat: up.clone().multiplyScalar(RADIUS + BATTERY_H * 0.5 * k),
+      aimQ: new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up),
+      aimDir: up.clone(),
+      pos: up.clone().multiplyScalar(RADIUS + BATTERY_H * k),
+      cover: ringSet(ci, BAL.batteryRange),
+      ceiling: BAL.batteryCeiling,
+      rate: BAL.batteryRate, dmg: BAL.batteryDmg,
+      splashDmg: BAL.splashDmg, cool: 0
+    };
+    mPos.copy(up).multiplyScalar(RADIUS - f.fit * 0.04);
+    mQuat.setFromUnitVectors(LOCAL_UP, up);
+    mScale.setScalar(k);
+    tur.batMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
+    towers.push(tur);
+    towerAt.set(ci, tur);
     rebuildEmplacements();
-    writeGun(tur, towers.length - 1);   // or it renders at the origin until the first shot
     return tur;
   }
 
-  //  Turrets and cannons live in one list so targeting, firing and
-  //  demolition need no special cases, but they draw from different meshes.
-  //  Slots are reassigned from scratch whenever the list changes, which is
-  //  rare and keeps every index honest after a removal.
+  //  Turrets, cannons and batteries live in one list so targeting, firing
+  //  and demolition need no special cases, but each draws from its own
+  //  meshes. Slots are reassigned from scratch whenever the list changes,
+  //  which is rare and keeps every index honest after a removal. Batteries
+  //  carry no gun barrel, so gun slots are compacted over the rest and each
+  //  tower remembers its own (gunSlot -1 means none).
   function rebuildEmplacements() {
-    let pads = 0, plats = 0;
+    let pads = 0, plats = 0, bats = 0, guns = 0;
     for (const t of towers) {
       if (t.kind === 'cannon') {
         if (platMesh) { platMesh.setMatrixAt(plats, t.platMat); coreMesh.setMatrixAt(plats, t.coreMat); }
         plats++;
+      } else if (t.kind === 'battery') {
+        if (batteryMesh) batteryMesh.setMatrixAt(bats, t.batMat);
+        bats++;
       } else {
         if (modelsOK) padMesh.setMatrixAt(pads, t.padMat);
         pads++;
       }
+      t.gunSlot = t.kind === 'battery' ? -1 : guns++;
+      writeGun(t);
     }
     if (modelsOK) { padMesh.count = pads; padMesh.instanceMatrix.needsUpdate = true; }
     if (platMesh) {
@@ -1587,20 +1662,41 @@
       platMesh.instanceMatrix.needsUpdate = true;
       coreMesh.instanceMatrix.needsUpdate = true;
     }
-    if (modelsOK) gunMesh.count = towers.length;
+    if (batteryMesh) { batteryMesh.count = bats; batteryMesh.instanceMatrix.needsUpdate = true; }
+    if (modelsOK) { gunMesh.count = guns; gunMesh.instanceMatrix.needsUpdate = true; }
   }
 
   // ---------- descending drops ----------
   const MAX_ALIENS = 400;
-  const VIPER_LEN = 1.884;
-  const alienMesh = new THREE.InstancedMesh(
-    new THREE.OctahedronGeometry(1, 0),        // placeholder until the viper lands
-    new THREE.MeshStandardMaterial({ color: 0xb45cff, emissive: 0x3a0d5c }),
-    MAX_ALIENS
-  );
-  alienMesh.count = 0;
-  alienMesh.frustumCulled = false;
-  world.add(alienMesh);
+  //  Model length per enemy type, in model units. Placeholders are built to
+  //  the viper's length so the size maths is identical either way; when a
+  //  real hulk or dart GLB lands in public/assets, measure it and update
+  //  its entry here.
+  const ENEMY_LEN = { viper: 1.884, hulk: 1.884, dart: 1.884 };
+  const VIPER_LEN = ENEMY_LEN.viper;
+
+  // one instanced mesh per enemy type, all drawn from the same alien list
+  function protoEnemyMesh(color, emissive) {
+    const m = new THREE.InstancedMesh(
+      new THREE.OctahedronGeometry(1, 0),      // stand-in until models arrive
+      new THREE.MeshStandardMaterial({ color, emissive }),
+      MAX_ALIENS
+    );
+    m.count = 0;
+    m.frustumCulled = false;
+    world.add(m);
+    return m;
+  }
+  const enemyMeshes = {
+    viper: protoEnemyMesh(0xb45cff, 0x3a0d5c),
+    hulk:  protoEnemyMesh(0xc03a28, 0x400d08),
+    dart:  protoEnemyMesh(0x58c8ff, 0x0d2c48)
+  };
+
+  function clearEnemies() {
+    aliens.length = 0;
+    for (const t in enemyMeshes) enemyMeshes[t].count = 0;
+  }
   const dummy = new THREE.Object3D();
 
   // ---------- shells and smoke ----------
@@ -1736,13 +1832,13 @@
 
   const bDir = new THREE.Vector3(), bStep = new THREE.Vector3(), bTgt = new THREE.Vector3();
 
-  function fireShell(from, dir, target, dmg) {
+  function fireShell(from, dir, target, dmg, splashDmg) {
     if (bullets.length >= BULLET_MAX) return;
     target.incoming += dmg;                        // reserved, not yet dealt
     bullets.push({
       pos: from.clone(),
       vel: dir.clone().multiplyScalar(BAL.shellSpeed),
-      target, dmg, life: 0, emit: 0, spent: false
+      target, dmg, splashDmg: splashDmg || 0, life: 0, emit: 0, spent: false
     });
     puff(from, tiles.meanInr * 0.30, tiles.meanInr * 1.1, 0.5, 1.0, 0.82, 0.5, 0.75);
   }
@@ -1767,9 +1863,32 @@
             puff(bTgt, scale * 0.25, scale * 1.6, 0.55 + Math.random() * 0.3,
                  1.0, 0.72, 0.45, 0.8);
           }
+          if (b.splashDmg) {
+            // the burst. Splash is not reserved like direct damage: several
+            // bursts overlapping the same pod just overkill it, which is
+            // the price of area fire, not a targeting bug.
+            const rB = BAL.splashRadius * scale;
+            for (const a2 of aliens) {
+              if (!a2.alive || a2 === b.target) continue;
+              if (a2.pos.distanceTo(bTgt) > rB) continue;
+              a2.hp -= b.splashDmg;
+              if (a2.hp <= 0) {
+                a2.alive = false;
+                G.gold += a2.pay;
+                for (let k = 0; k < 6; k++) {
+                  puff(a2.pos, scale * 0.35, scale * 2.2, 0.7 + Math.random() * 0.4,
+                       0.72, 0.45, 0.95, 0.7);
+                }
+              }
+            }
+            for (let k = 0; k < 8; k++) {
+              puff(bTgt, scale * 0.5, scale * 3.0, 0.6 + Math.random() * 0.4,
+                   1.0, 0.6, 0.3, 0.8);
+            }
+          }
           if (b.target.hp <= 0 && b.target.alive) {
             b.target.alive = false;
-            G.gold += BAL.killPay;
+            G.gold += b.target.pay;
             for (let k = 0; k < 10; k++) {
               puff(bTgt, scale * 0.4, scale * 2.6, 0.8 + Math.random() * 0.5,
                    0.72, 0.45, 0.95, 0.7);
@@ -1806,7 +1925,7 @@
     for (let i = 0; i < live; i++) {
       dummy.position.copy(bullets[i].pos);
       dummy.quaternion.set(0, 0, 0, 1);
-      dummy.scale.setScalar(scale * 0.13);
+      dummy.scale.setScalar(scale * (bullets[i].splashDmg ? 0.22 : 0.13));
       dummy.updateMatrix();
       bulletMesh.setMatrixAt(i, dummy.matrix);
     }
@@ -2000,6 +2119,8 @@
     const hp = BAL.alienHp(G.wave);
     const speed = BAL.alienSpeed(G.wave);
     const fleet = G.ships.length;
+    const hf = G.wave >= BAL.hulkFrom ? BAL.hulkFrac(G.wave) : 0;
+    const df = G.wave >= BAL.dartFrom ? BAL.dartFrac(G.wave) : 0;
 
     G.queue = [];
     for (let si = 0; si < fleet; si++) {
@@ -2019,7 +2140,9 @@
       const share = Math.floor(n / fleet) + (si < n % fleet ? 1 : 0);
       for (let i = 0; i < share; i++) {
         const pool = (built.length && Math.random() < BAL.aimAtBuilt) ? built : cand;
-        G.queue.push({ ci: pool[(Math.random() * pool.length) | 0], hp, speed, ship });
+        const r = Math.random();
+        const type = r < hf ? 'hulk' : r < hf + df ? 'dart' : 'viper';
+        G.queue.push({ ci: pool[(Math.random() * pool.length) | 0], type, hp, speed, ship });
       }
     }
     // interleave, or ship one empties its bays before ship two starts
@@ -2037,21 +2160,26 @@
   function spawnOne(spec) {
     if (aliens.length >= MAX_ALIENS) return;
     const ship = spec.ship || G.ships[0];
+    const E = BAL.enemies[spec.type];
     const tgt = tiles.cells[spec.ci].center;
     const alt = ship.dist - RADIUS;             // it leaves from the ship itself
+    const speed = spec.speed * E.speed;
     const sweep = ship.bearing.angleTo(tgt);
-    const fall = alt / spec.speed;              // seconds to the ground
+    const fall = alt / speed;                   // seconds to the ground
     aliens.push({
       ci: spec.ci,
+      type: spec.type,
       dir: ship.bearing.clone(),                // starts under its own ship
       tgt: tgt.clone(),
       turn: sweep / Math.max(fall * BAL.converge, 0.001),   // arrives over its
       alt,                                                  // column part way down
       pos: new THREE.Vector3(),
       prev: new THREE.Vector3(),
-      hp: spec.hp,
+      hp: spec.hp * E.hp,
       incoming: 0,
-      speed: spec.speed,
+      dmg: Math.round(BAL.landDamage * E.dmg),
+      pay: E.pay,
+      speed,
       alive: true
     });
   }
@@ -2114,7 +2242,7 @@
       if (a.alt <= 0) {
         a.alive = false;
         G.landed++;
-        G.hp -= BAL.landDamage;
+        G.hp -= a.dmg;
         say(demolish(a.ci) || 'BREACH');
         if (G.hp <= 0) { G.hp = 0; loseGame(); }
       }
@@ -2141,14 +2269,16 @@
       }
       if (!best || t.cool > 0) continue;
       t.cool = t.rate;
-      muzzle.copy(t.aimDir).multiplyScalar(GUN_TIP * t.k).add(t.seat);
-      fireShell(muzzle, t.aimDir, best, t.dmg);
+      if (t.kind === 'battery') muzzle.copy(t.pos);   // no barrel to clear
+      else muzzle.copy(t.aimDir).multiplyScalar(GUN_TIP * t.k).add(t.seat);
+      fireShell(muzzle, t.aimDir, best, t.dmg, t.splashDmg);
     }
-    for (let i = 0; i < towers.length; i++) writeGun(towers[i], i);
+    for (const t of towers) writeGun(t);
     if (modelsOK && towers.length) gunMesh.instanceMatrix.needsUpdate = true;
 
-    // compact and draw
+    // compact and draw, each type into its own mesh
     let live = 0;
+    const drawn = { viper: 0, hulk: 0, dart: 0 };
     for (let i = 0; i < aliens.length; i++) {
       const a = aliens[i];
       if (!a.alive) continue;
@@ -2168,7 +2298,7 @@
       fX.crossVectors(fY, fZ).normalize();
       fBasis.makeBasis(fX, fY, fZ);
       dummy.quaternion.setFromRotationMatrix(fBasis);
-      const vk = tiles.meanInr * BAL.viperSize / VIPER_LEN;
+      const vk = tiles.meanInr * BAL.enemies[a.type].size / ENEMY_LEN[a.type];
       dummy.scale.setScalar(vk);
 
       a.emit = (a.emit || 0) + dt;              // fZ already points out the back
@@ -2177,12 +2307,14 @@
         flame(alienPos, fZ, 0.94 * vk, tiles.meanInr * 0.10, BAL.flameLife);
       }
       dummy.updateMatrix();
-      alienMesh.setMatrixAt(live, dummy.matrix);
+      enemyMeshes[a.type].setMatrixAt(drawn[a.type]++, dummy.matrix);
       live++;
     }
     aliens.length = live;
-    alienMesh.count = live;
-    alienMesh.instanceMatrix.needsUpdate = true;
+    for (const t in enemyMeshes) {
+      enemyMeshes[t].count = drawn[t];
+      enemyMeshes[t].instanceMatrix.needsUpdate = true;
+    }
 
     updateFighters(dt);
     updateBullets(dt);
@@ -2197,7 +2329,7 @@
     hideSummary();
     G.inWave = false;
     G.queue.length = 0;
-    aliens.length = 0; alienMesh.count = 0;      // nothing left hanging in the sky
+    clearEnemies();                              // nothing left hanging in the sky
     bullets.length = 0; bulletMesh.count = 0;
     hideMothers();
     say('PLANET LOST \u00B7 NEW WORLD TO RESTART', true);
@@ -2215,6 +2347,8 @@
   const jetBtn = document.getElementById('jetBtn');
   const foundryBtn = document.getElementById('foundryBtn');
   const cannonBtn = document.getElementById('cannonBtn');
+  const batteryBtn = document.getElementById('batteryBtn');
+  const upgBtn = document.getElementById('upgBtn');
   const waveBtn = document.getElementById('waveBtn');
   let alertUntil = 0;
 
@@ -2243,6 +2377,10 @@
     cannonBtn.textContent = 'Build sea cannon (' + BAL.cannonCost + ')';
     cannonBtn.disabled = G.gold < BAL.cannonCost && G.build !== 'cannon';
     cannonBtn.setAttribute('aria-pressed', G.build === 'cannon' ? 'true' : 'false');
+    batteryBtn.textContent = 'Build missile battery (' + BAL.batteryCost + ')';
+    batteryBtn.disabled = G.gold < BAL.batteryCost && G.build !== 'battery';
+    batteryBtn.setAttribute('aria-pressed', G.build === 'battery' ? 'true' : 'false');
+    upgBtn.setAttribute('aria-pressed', G.build === 'upgrade' ? 'true' : 'false');
     foundryBtn.disabled = G.gold < BAL.foundryCost && G.build !== 'foundry';
     foundryBtn.setAttribute('aria-pressed', G.build === 'foundry' ? 'true' : 'false');
     buildBtn.disabled = G.gold < BAL.turretCost && G.build !== 'turret';
@@ -2264,6 +2402,8 @@
       : G.build === 'fighter' ? 'Tap any tile to base a fighter, water included. It patrols that tile\u2019s circle and closes to gun range.'
       : G.build === 'cannon' ? 'Tap a WATER tile to float a sea cannon. Longer reach and a heavier shell than a land turret.'
       : G.build === 'foundry' ? 'Tap a tile to build a foundry. It pays on each wave cleared: mountain 8, desert 7, plain 5, forest 4, swamp 3.'
+      : G.build === 'battery' ? 'Tap a land tile to build a missile battery. Slow, heavy shells that burst on impact and damage everything nearby.'
+      : G.build === 'upgrade' ? 'Tap one of your buildings to upgrade it (3 levels). Guns hit harder and reach higher; foundries pay more.'
       : '';
     hint.classList.toggle('gone', !G.build);
   }
@@ -2272,6 +2412,8 @@
   jetBtn.addEventListener('click', () => setBuild(G.build === 'fighter' ? null : 'fighter'));
   foundryBtn.addEventListener('click', () => setBuild(G.build === 'foundry' ? null : 'foundry'));
   cannonBtn.addEventListener('click', () => setBuild(G.build === 'cannon' ? null : 'cannon'));
+  batteryBtn.addEventListener('click', () => setBuild(G.build === 'battery' ? null : 'battery'));
+  upgBtn.addEventListener('click', () => setBuild(G.build === 'upgrade' ? null : 'upgrade'));
   waveBtn.addEventListener('click', () => { if (!G.inWave && !G.over) { G.breakLeft = 0; } });
 
   // ---------- wave summary ----------
@@ -2337,8 +2479,17 @@
     mother:  ['/assets/mother.glb',  '/__l5e/assets-v1/a43bfc6e-27db-4579-b762-be7ff49cf039/mother.glb'],
     viper:   ['/assets/viper.glb',   '/__l5e/assets-v1/946d2261-e618-49a3-a170-f8d9d8d00e20/viper.glb'],
     hover:   ['/assets/hover.glb',   '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb'],
-    core:    ['/assets/core.glb',    '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb']
+    core:    ['/assets/core.glb',    '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb'],
+    hulk:    ['/assets/hulk.glb'],
+    dart:    ['/assets/dart.glb'],
+    battery: ['/assets/battery.glb']
   };
+
+  //  Slots with no shipped GLB yet: they render as placeholders by design,
+  //  so a missing file is expected and not worth an on-screen warning.
+  //  Drop a model into public/assets under that name to fill the slot
+  //  (and measure its length into ENEMY_LEN / footprint constants).
+  const OPTIONAL_MODELS = new Set(['hulk', 'dart', 'battery']);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
@@ -2374,6 +2525,18 @@
         geo = new THREE.CylinderGeometry(PLAT_R, PLAT_R, PLAT_DECK, 10);
         geo.translate(0, PLAT_DECK / 2, 0);             // deck top at PLAT_DECK
         color = 0x4a5a6a; break;
+      case 'hulk':
+        geo = new THREE.ConeGeometry(VIPER_LEN * 0.34, VIPER_LEN, 6);
+        geo.rotateX(-Math.PI / 2);                      // nose down -Z
+        color = 0xc03a28; break;
+      case 'dart':
+        geo = new THREE.ConeGeometry(VIPER_LEN * 0.12, VIPER_LEN, 4);
+        geo.rotateX(-Math.PI / 2);                      // nose down -Z
+        color = 0x58c8ff; break;
+      case 'battery':
+        geo = new THREE.CylinderGeometry(BATTERY_R * 0.55, BATTERY_R, BATTERY_H, 6);
+        geo.translate(0, BATTERY_H / 2, 0);             // base at y=0
+        color = 0x7d8a5a; break;
       default:  // core
         geo = new THREE.CylinderGeometry(CORE_R * 0.7, CORE_R, CORE_SEAT, 8);
         geo.translate(0, CORE_SEAT / 2, 0);
@@ -2400,6 +2563,7 @@
     foundryMesh = instanced(parts.foundry, MAX_TURRETS, false);
     platMesh = instanced(parts.hover, MAX_TURRETS, true);
     coreMesh = instanced(parts.core, MAX_TURRETS, true);
+    batteryMesh = instanced(parts.battery, MAX_TURRETS, false);
 
     for (let i = 0; i < MAX_SHIPS; i++) {
       const m = new THREE.Mesh(parts.mother.geo, parts.mother.mat);  // geo/mat shared
@@ -2409,12 +2573,15 @@
       motherMeshes.push(m);
     }
 
-    // swap the placeholder out from under the pod mesh so every existing
-    // reference to alienMesh stays valid
-    alienMesh.geometry.dispose();
-    alienMesh.material.dispose();
-    alienMesh.geometry = parts.viper.geo;
-    alienMesh.material = parts.viper.mat;
+    // swap the stand-ins out from under the enemy meshes so every existing
+    // reference stays valid
+    for (const t in enemyMeshes) {
+      const m = enemyMeshes[t];
+      m.geometry.dispose();
+      m.material.dispose();
+      m.geometry = parts[t].geo;
+      m.material = parts[t].mat;
+    }
   }
 
   const startBtn = document.getElementById('startBtn');
@@ -2441,10 +2608,9 @@
       parts[n] = placeholderPart(n);
     }));
     buildModels(parts);
-    if (missing.length) {
-      console.warn('models missing, using placeholders:', missing.join(', '));
-      say('MODELS MISSING: ' + missing.join(', ').toUpperCase(), true);
-    }
+    if (missing.length) console.warn('models missing, using placeholders:', missing.join(', '));
+    const gone = missing.filter(n => !OPTIONAL_MODELS.has(n));
+    if (gone.length) say('MODELS MISSING: ' + gone.join(', ').toUpperCase(), true);
     startBtn.disabled = false;
     startBtn.textContent = 'Start';
   }
@@ -2514,6 +2680,7 @@
     const ci = cellForFace(hit.faceIndex);
 
     if (!G.build) return;
+    if (G.build === 'upgrade') { upgradeAt(ci); return; }
     // a fighter is based on a tile, not built on it, so it can sit over water
     const wet = cellType[ci] === 'lake';
     if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
@@ -2524,6 +2691,13 @@
       if (G.gold < BAL.cannonCost) { say('NOT ENOUGH GOLD'); return; }
       if (!placeCannon(ci)) { say('CANNON LIMIT REACHED'); return; }
       G.gold -= BAL.cannonCost;
+      return;
+    }
+
+    if (G.build === 'battery') {
+      if (G.gold < BAL.batteryCost) { say('NOT ENOUGH GOLD'); return; }
+      if (!placeBattery(ci)) { say('BATTERY LIMIT REACHED'); return; }
+      G.gold -= BAL.batteryCost;
       return;
     }
 
@@ -2548,12 +2722,56 @@
     placeTurret(ci);
   }
 
+  // =====================================================================
+  //  UPGRADES
+  //
+  //  Three levels per building, paid for in place. The price is a share of
+  //  the building's own cost times the level being bought, so growing a
+  //  cheap turret stays cheap and a foundry tier costs real money. Guns
+  //  gain damage and ceiling and visibly grow; foundries pay more. The
+  //  upgrade dies with the building - a levelled turret is a bigger bet on
+  //  the same square of ground, which is the point.
+  // =====================================================================
+  const UPG_BASE = {
+    turret: 'turretCost', cannon: 'cannonCost', battery: 'batteryCost'
+  };
+
+  function upgradeAt(ci) {
+    const t = towerAt.get(ci), jf = fighterAt.get(ci), fo = foundryAt.get(ci);
+    const b = t || jf || fo;
+    if (!b) { say('NOTHING TO UPGRADE HERE'); return; }
+    if (b.level >= BAL.upgradeMax) { say('ALREADY AT MAX LEVEL'); return; }
+    const base = t ? BAL[UPG_BASE[t.kind]] : jf ? BAL.jetCost : BAL.foundryCost;
+    const cost = BAL.upgradeCost(base, b.level + 1);
+    if (G.gold < cost) { say('UPGRADE COSTS ' + cost + ' GOLD'); return; }
+    G.gold -= cost;
+    b.level++;
+    if (t) {
+      t.dmg = Math.round(t.dmg * BAL.upgradeDmg);
+      if (t.splashDmg) t.splashDmg = Math.round(t.splashDmg * BAL.upgradeDmg);
+      t.ceiling += BAL.upgradeCeil;
+      if (t.gunSlot >= 0) {
+        // the gun grows about its own ball centre, so a levelled turret
+        // reads at a glance without the pad overhanging its tile
+        t.k *= 1.15;
+        t.pos.copy(t.up).multiplyScalar(t.seat.length() + GUN_TIP * t.k);
+        writeGun(t);
+        if (modelsOK) gunMesh.instanceMatrix.needsUpdate = true;
+      }
+    } else if (jf) {
+      jf.dmg = Math.round(jf.dmg * BAL.upgradeDmg);
+      jf.k *= 1.12;
+    } else {
+      fo.rate = Math.ceil(fo.rate * BAL.upgradeYield);
+    }
+    say('LEVEL ' + b.level + (fo ? ' · ' + fo.rate + ' GOLD/WAVE' : ''));
+  }
+
   function resetGame() {
     clearTurrets();
     clearFighters();
     clearFoundries();
-    aliens.length = 0;
-    alienMesh.count = 0;
+    clearEnemies();
     bullets.length = 0;
     bulletMesh.count = 0;
     sCount = 0;
@@ -2806,6 +3024,8 @@
     if (e.key === 'f' || e.key === 'F') setBuild(G.build === 'fighter' ? null : 'fighter');
     if (e.key === 'g' || e.key === 'G') setBuild(G.build === 'foundry' ? null : 'foundry');
     if (e.key === 'c' || e.key === 'C') setBuild(G.build === 'cannon' ? null : 'cannon');
+    if (e.key === 'm' || e.key === 'M') setBuild(G.build === 'battery' ? null : 'battery');
+    if (e.key === 'u' || e.key === 'U') setBuild(G.build === 'upgrade' ? null : 'upgrade');
   });
 
   function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
