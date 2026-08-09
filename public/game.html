@@ -137,6 +137,25 @@
   .menu-panel button{width:100%;text-align:left}
   .menu-panel .count{padding:2px 2px 0;text-align:left}
 
+  /* Unit card: pops up beside a tapped building. Its own fixed element, not
+     inside a .hud, so it takes clicks without opting a whole panel back in. */
+  .unitcard{
+    position:fixed;z-index:60;display:none;
+    min-width:190px;padding:12px 14px;
+    background:rgba(9,11,14,.985);
+    border:1px solid var(--line);border-radius:2px;
+    box-shadow:0 10px 24px rgba(0,0,0,.55);
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  }
+  .unitcard.open{display:block}
+  .unit-name{color:var(--hot);letter-spacing:.22em;margin-bottom:8px}
+  .unit-row{
+    display:flex;justify-content:space-between;gap:18px;
+    margin-top:5px;color:var(--ink-dim);font-variant-numeric:tabular-nums;
+  }
+  .unit-row b{color:var(--ink);font-weight:400}
+  .unitcard button{width:100%;margin-top:10px}
+
   .stats{display:flex;gap:24px;align-items:center;justify-content:center;
          margin-top:12px;font-size:22px;letter-spacing:.10em;
          font-variant-numeric:tabular-nums}
@@ -277,7 +296,6 @@
     <button id="foundryBtn">Build foundry (20)</button>
     <button id="cannonBtn">Build sea cannon (12)</button>
     <button id="batteryBtn">Build missile battery (18)</button>
-    <button id="upgBtn">Upgrade</button>
     <button id="waveBtn">Call wave</button>
     <button id="viewBtn">Surface view</button>
   </div>
@@ -307,6 +325,14 @@
     <button id="modalBtn">Continue</button>
     <label class="check"><input type="checkbox" id="autoBox">autoplay: continue after 5s</label>
   </div>
+</div>
+
+<div class="unitcard" id="unitCard">
+  <div class="unit-name" id="unitName">Turret</div>
+  <div class="unit-row" id="unitDmgRow"><span id="unitDmgLabel">damage</span><b id="unitDmg"></b></div>
+  <div class="unit-row" id="unitRateRow"><span>attack speed</span><b id="unitRate"></b></div>
+  <div class="unit-row"><span>level</span><b id="unitLvl"></b></div>
+  <button id="unitUpgBtn">Upgrade</button>
 </div>
 
 <div class="hud tc">
@@ -1672,8 +1698,8 @@
   //  the viper's length so the size maths is identical either way; when a
   //  real hulk or dart GLB lands in public/assets, measure it and update
   //  its entry here.
-  const ENEMY_LEN = { viper: 1.884, hulk: 1.884, dart: 1.884 };
-  const VIPER_LEN = ENEMY_LEN.viper;
+  const ENEMY_LEN = { viper: 1.898, hulk: 1.884, dart: 1.884 };
+  const VIPER_LEN = 1.884;           // placeholder cones are built to this
 
   // one instanced mesh per enemy type, all drawn from the same alien list
   function protoEnemyMesh(color, emissive) {
@@ -2348,7 +2374,6 @@
   const foundryBtn = document.getElementById('foundryBtn');
   const cannonBtn = document.getElementById('cannonBtn');
   const batteryBtn = document.getElementById('batteryBtn');
-  const upgBtn = document.getElementById('upgBtn');
   const waveBtn = document.getElementById('waveBtn');
   let alertUntil = 0;
 
@@ -2380,7 +2405,7 @@
     batteryBtn.textContent = 'Build missile battery (' + BAL.batteryCost + ')';
     batteryBtn.disabled = G.gold < BAL.batteryCost && G.build !== 'battery';
     batteryBtn.setAttribute('aria-pressed', G.build === 'battery' ? 'true' : 'false');
-    upgBtn.setAttribute('aria-pressed', G.build === 'upgrade' ? 'true' : 'false');
+    if (selCi !== null) refreshUnitCard();
     foundryBtn.disabled = G.gold < BAL.foundryCost && G.build !== 'foundry';
     foundryBtn.setAttribute('aria-pressed', G.build === 'foundry' ? 'true' : 'false');
     buildBtn.disabled = G.gold < BAL.turretCost && G.build !== 'turret';
@@ -2403,7 +2428,6 @@
       : G.build === 'cannon' ? 'Tap a WATER tile to float a sea cannon. Longer reach and a heavier shell than a land turret.'
       : G.build === 'foundry' ? 'Tap a tile to build a foundry. It pays on each wave cleared: mountain 8, desert 7, plain 5, forest 4, swamp 3.'
       : G.build === 'battery' ? 'Tap a land tile to build a missile battery. Slow, heavy shells that burst on impact and damage everything nearby.'
-      : G.build === 'upgrade' ? 'Tap one of your buildings to upgrade it (3 levels). Guns hit harder and reach higher; foundries pay more.'
       : '';
     hint.classList.toggle('gone', !G.build);
   }
@@ -2413,7 +2437,6 @@
   foundryBtn.addEventListener('click', () => setBuild(G.build === 'foundry' ? null : 'foundry'));
   cannonBtn.addEventListener('click', () => setBuild(G.build === 'cannon' ? null : 'cannon'));
   batteryBtn.addEventListener('click', () => setBuild(G.build === 'battery' ? null : 'battery'));
-  upgBtn.addEventListener('click', () => setBuild(G.build === 'upgrade' ? null : 'upgrade'));
   waveBtn.addEventListener('click', () => { if (!G.inWave && !G.over) { G.breakLeft = 0; } });
 
   // ---------- wave summary ----------
@@ -2455,7 +2478,79 @@
   });
 
   document.getElementById('modalBtn').addEventListener('click', hideSummary);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideSummary(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hideSummary(); hideUnitCard(); } });
+
+  // ---------- unit card ----------
+  //  Tap one of your buildings (with no build mode armed) and this pops up
+  //  beside it: what it is, what it does, and the button to level it up.
+  //  It reads live state on every HUD tick, so the numbers stay honest and
+  //  the card folds itself away if the building dies under it.
+  const unitCard = document.getElementById('unitCard');
+  const unitName = document.getElementById('unitName');
+  const unitDmgLabel = document.getElementById('unitDmgLabel');
+  const unitDmg = document.getElementById('unitDmg');
+  const unitRateRow = document.getElementById('unitRateRow');
+  const unitRate = document.getElementById('unitRate');
+  const unitLvl = document.getElementById('unitLvl');
+  const unitUpgBtn = document.getElementById('unitUpgBtn');
+  let selCi = null;
+
+  const TOWER_NAMES = { turret: 'Turret', cannon: 'Sea cannon', battery: 'Missile battery' };
+
+  function refreshUnitCard() {
+    const b = selCi !== null && buildingAt(selCi);
+    if (!b) { hideUnitCard(); return; }
+    const t = towerAt.get(selCi), jf = fighterAt.get(selCi);
+
+    if (t) {
+      unitName.textContent = TOWER_NAMES[t.kind];
+      unitDmgLabel.textContent = 'damage';
+      unitDmg.textContent = t.splashDmg ? t.dmg + ' +' + t.splashDmg + ' splash' : t.dmg;
+      unitRateRow.style.display = '';
+      unitRate.textContent = (1 / t.rate).toFixed(1) + '/s';
+    } else if (jf) {
+      unitName.textContent = 'Fighter';
+      unitDmgLabel.textContent = 'damage';
+      unitDmg.textContent = jf.dmg;
+      unitRateRow.style.display = '';
+      unitRate.textContent = (1 / BAL.jetRate).toFixed(1) + '/s';
+    } else {
+      unitName.textContent = 'Foundry';
+      unitDmgLabel.textContent = 'yield';
+      unitDmg.textContent = b.rate + ' gold/wave';
+      unitRateRow.style.display = 'none';
+    }
+    unitLvl.textContent = b.level + ' / ' + BAL.upgradeMax;
+
+    if (b.level >= BAL.upgradeMax) {
+      unitUpgBtn.textContent = 'Max level';
+      unitUpgBtn.disabled = true;
+    } else {
+      const cost = BAL.upgradeCost(upgradeBase(selCi), b.level + 1);
+      unitUpgBtn.textContent = 'Upgrade (' + cost + ')';
+      unitUpgBtn.disabled = G.gold < cost;
+    }
+  }
+
+  function openUnitCard(ci, x, y) {
+    selCi = ci;
+    refreshUnitCard();
+    if (selCi === null) return;                    // nothing there after all
+    unitCard.classList.add('open');
+    // beside the tap, clamped so it never hangs off screen
+    const w = unitCard.offsetWidth, h = unitCard.offsetHeight;
+    unitCard.style.left = Math.max(10, Math.min(x + 14, window.innerWidth - w - 10)) + 'px';
+    unitCard.style.top = Math.max(10, Math.min(y + 14, window.innerHeight - h - 10)) + 'px';
+  }
+
+  function hideUnitCard() {
+    selCi = null;
+    unitCard.classList.remove('open');
+  }
+
+  unitUpgBtn.addEventListener('click', () => {
+    if (selCi !== null) { upgradeAt(selCi); refreshUnitCard(); }
+  });
 
   // ---------- model loading ----------
   //
@@ -2477,7 +2572,10 @@
     jet:     ['/assets/jet.glb',     '/__l5e/assets-v1/aa131bb3-9b03-4489-b483-5ab9fe50aa00/jet.glb'],
     foundry: ['/assets/foundry.glb', '/__l5e/assets-v1/9da45853-b69f-416c-9044-3847846ee13c/foundry.glb'],
     mother:  ['/assets/mother.glb',  '/__l5e/assets-v1/a43bfc6e-27db-4579-b762-be7ff49cf039/mother.glb'],
-    viper:   ['/assets/viper.glb',   '/__l5e/assets-v1/946d2261-e618-49a3-a170-f8d9d8d00e20/viper.glb'],
+    // the descending enemy flies the dropship; the old viper stays behind
+    // it as a fallback (decimated from the 33 MB source export, nose baked
+    // onto -Z - regenerate via gltf-transform if the source changes)
+    viper:   ['/assets/dropship.glb', '/assets/viper.glb'],
     hover:   ['/assets/hover.glb',   '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb'],
     core:    ['/assets/core.glb',    '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb'],
     hulk:    ['/assets/hulk.glb'],
@@ -2676,11 +2774,16 @@
     ndc.y = -(clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(ndc, camera);
     const hit = raycaster.intersectObject(tileMesh, false)[0];
-    if (!hit || hit.faceIndex === undefined) return;
+    if (!hit || hit.faceIndex === undefined) { hideUnitCard(); return; }
     const ci = cellForFace(hit.faceIndex);
 
-    if (!G.build) return;
-    if (G.build === 'upgrade') { upgradeAt(ci); return; }
+    if (!G.build) {
+      // no build mode armed: a tap inspects. Your building opens its card,
+      // bare ground closes whatever card was up.
+      if (buildingAt(ci)) openUnitCard(ci, clientX, clientY);
+      else hideUnitCard();
+      return;
+    }
     // a fighter is based on a tile, not built on it, so it can sit over water
     const wet = cellType[ci] === 'lake';
     if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
@@ -2725,46 +2828,44 @@
   // =====================================================================
   //  UPGRADES
   //
-  //  Three levels per building, paid for in place. The price is a share of
-  //  the building's own cost times the level being bought, so growing a
+  //  Three levels per building, paid for in place through the unit card
+  //  that opens when you tap one of your buildings. The price is a share
+  //  of the building's own cost times the level being bought, so growing a
   //  cheap turret stays cheap and a foundry tier costs real money. Guns
-  //  gain damage and ceiling and visibly grow; foundries pay more. The
-  //  upgrade dies with the building - a levelled turret is a bigger bet on
-  //  the same square of ground, which is the point.
+  //  gain damage and ceiling; foundries pay more. The upgrade dies with
+  //  the building - a levelled turret is a bigger bet on the same square
+  //  of ground, which is the point.
   // =====================================================================
   const UPG_BASE = {
     turret: 'turretCost', cannon: 'cannonCost', battery: 'batteryCost'
   };
 
+  function buildingAt(ci) {
+    return towerAt.get(ci) || fighterAt.get(ci) || foundryAt.get(ci) || null;
+  }
+
+  function upgradeBase(ci) {
+    const t = towerAt.get(ci);
+    return t ? BAL[UPG_BASE[t.kind]] : fighterAt.has(ci) ? BAL.jetCost : BAL.foundryCost;
+  }
+
   function upgradeAt(ci) {
-    const t = towerAt.get(ci), jf = fighterAt.get(ci), fo = foundryAt.get(ci);
-    const b = t || jf || fo;
-    if (!b) { say('NOTHING TO UPGRADE HERE'); return; }
-    if (b.level >= BAL.upgradeMax) { say('ALREADY AT MAX LEVEL'); return; }
-    const base = t ? BAL[UPG_BASE[t.kind]] : jf ? BAL.jetCost : BAL.foundryCost;
-    const cost = BAL.upgradeCost(base, b.level + 1);
+    const b = buildingAt(ci);
+    if (!b || b.level >= BAL.upgradeMax) return;
+    const cost = BAL.upgradeCost(upgradeBase(ci), b.level + 1);
     if (G.gold < cost) { say('UPGRADE COSTS ' + cost + ' GOLD'); return; }
     G.gold -= cost;
     b.level++;
-    if (t) {
-      t.dmg = Math.round(t.dmg * BAL.upgradeDmg);
-      if (t.splashDmg) t.splashDmg = Math.round(t.splashDmg * BAL.upgradeDmg);
-      t.ceiling += BAL.upgradeCeil;
-      if (t.gunSlot >= 0) {
-        // the gun grows about its own ball centre, so a levelled turret
-        // reads at a glance without the pad overhanging its tile
-        t.k *= 1.15;
-        t.pos.copy(t.up).multiplyScalar(t.seat.length() + GUN_TIP * t.k);
-        writeGun(t);
-        if (modelsOK) gunMesh.instanceMatrix.needsUpdate = true;
-      }
-    } else if (jf) {
-      jf.dmg = Math.round(jf.dmg * BAL.upgradeDmg);
-      jf.k *= 1.12;
+    if (towerAt.get(ci) === b) {
+      b.dmg = Math.round(b.dmg * BAL.upgradeDmg);
+      if (b.splashDmg) b.splashDmg = Math.round(b.splashDmg * BAL.upgradeDmg);
+      b.ceiling += BAL.upgradeCeil;
+    } else if (fighterAt.get(ci) === b) {
+      b.dmg = Math.round(b.dmg * BAL.upgradeDmg);
     } else {
-      fo.rate = Math.ceil(fo.rate * BAL.upgradeYield);
+      b.rate = Math.ceil(b.rate * BAL.upgradeYield);
     }
-    say('LEVEL ' + b.level + (fo ? ' · ' + fo.rate + ' GOLD/WAVE' : ''));
+    say('LEVEL ' + b.level);
   }
 
   function resetGame() {
@@ -2782,6 +2883,7 @@
     G.paused = false;
     G.landed = 0;
     hideSummary();
+    hideUnitCard();
     alertEl.classList.add('quiet');    // a sticky PLANET LOST must not
     alertUntil = 0;                    // outlive the game it belongs to
     G.ships.length = 0;
@@ -3025,7 +3127,6 @@
     if (e.key === 'g' || e.key === 'G') setBuild(G.build === 'foundry' ? null : 'foundry');
     if (e.key === 'c' || e.key === 'C') setBuild(G.build === 'cannon' ? null : 'cannon');
     if (e.key === 'm' || e.key === 'M') setBuild(G.build === 'battery' ? null : 'battery');
-    if (e.key === 'u' || e.key === 'U') setBuild(G.build === 'upgrade' ? null : 'upgrade');
   });
 
   function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
