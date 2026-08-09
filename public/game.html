@@ -84,6 +84,9 @@
   .modal-row b{color:var(--ink);font-weight:400}
   .modal-row.bad b{color:#ff5f56}
   .modal-row.pay b{color:var(--hot)}
+  /* the incoming-force rows slot straight into the card's flex column,
+     costing no gap when the manifest is empty */
+  #modalComp{display:contents}
   /* fleet warning: only present on the cards before a wave that adds a
      mothership, and loud, because the answer to it costs a whole break */
   .modal-warn{
@@ -332,6 +335,7 @@
       <div class="modal-row" id="rowLanded"><span>made landfall</span><b>0</b></div>
       <div class="modal-row pay"><span>wave payout</span><b id="modalPay">0</b></div>
       <div class="modal-row"><span>next wave</span><b id="modalNext">2</b></div>
+      <div id="modalComp"></div>
     </div>
     <div class="modal-warn" id="modalWarn">⚠ another mothership warps in</div>
     <button id="modalBtn">Continue</button>
@@ -933,7 +937,7 @@
     hp: 100, hpMax: 100, gold: 25, wave: 0,
     inWave: false, breakLeft: 20, spawnTimer: 0, queue: [],
     ready: false, over: false, started: false, paused: false,
-    build: null, bearing: null,
+    build: null, bearing: null, nextComp: null,
     zoneAng: 0.38, shipDist: 1.55, landed: 0, ships: []
   };
 
@@ -2313,10 +2317,29 @@
     return bearing.clone().applyQuaternion(qDrift).normalize();
   }
 
+  //  The wave's manifest - how many of what - is rolled here, when the
+  //  previous wave ends, so the summary card can print exactly what is
+  //  coming rather than an estimate. startWave consumes the same list.
+  function rollComposition(w) {
+    const n = BAL.alienN(w);
+    const hf = w >= BAL.hulkFrom ? BAL.hulkFrac(w) : 0;
+    const df = w >= BAL.dartFrom ? BAL.dartFrac(w) : 0;
+    const list = [];
+    const counts = { viper: 0, hulk: 0, dart: 0 };
+    for (let i = 0; i < n; i++) {
+      const r = Math.random();
+      const type = r < hf ? 'hulk' : r < hf + df ? 'dart' : 'viper';
+      list.push(type);
+      counts[type]++;
+    }
+    return { list, counts };
+  }
+
   function pickBearing() {
     // everything about the coming wave is decided here, so the break shows
     // you the real thing rather than a placeholder
     const w = G.wave + 1;
+    G.nextComp = rollComposition(w);
     G.zoneAng = zoneAngleFor(w);
     G.shipDist = shipDistFor(w);
     const want = shipCountFor(w);
@@ -2416,8 +2439,10 @@
     const hp = BAL.alienHp(G.wave);
     const speed = BAL.alienSpeed(G.wave);
     const fleet = G.ships.length;
-    const hf = G.wave >= BAL.hulkFrom ? BAL.hulkFrac(G.wave) : 0;
-    const df = G.wave >= BAL.dartFrom ? BAL.dartFrac(G.wave) : 0;
+    // the manifest the summary card promised; re-rolled only if it is
+    // somehow stale (a balance patch changing alienN mid-run, say)
+    const comp = (G.nextComp && G.nextComp.list.length === n)
+      ? G.nextComp.list.slice() : rollComposition(G.wave).list;
 
     G.queue = [];
     for (let si = 0; si < fleet; si++) {
@@ -2437,9 +2462,7 @@
       const share = Math.floor(n / fleet) + (si < n % fleet ? 1 : 0);
       for (let i = 0; i < share; i++) {
         const pool = (built.length && Math.random() < BAL.aimAtBuilt) ? built : cand;
-        const r = Math.random();
-        const type = r < hf ? 'hulk' : r < hf + df ? 'dart' : 'viper';
-        G.queue.push({ ci: pool[(Math.random() * pool.length) | 0], type, hp, speed, ship });
+        G.queue.push({ ci: pool[(Math.random() * pool.length) | 0], type: comp.pop(), hp, speed, ship });
       }
     }
     // interleave, or ship one empties its bays before ship two starts
@@ -2488,8 +2511,8 @@
     const pay = BAL.income(G.wave) + foundryIncome();
     G.gold += pay;
     tickRecoveries();                // a wave survived is a wave of digging
-    showSummary(G.wave, G.landed, pay);
-    pickBearing();                   // you get the next one straight away
+    pickBearing();                   // the next wave exists before the card
+    showSummary(G.wave, G.landed, pay);   // ...so the card can describe it
   }
 
   // ---------- tick ----------
@@ -2771,7 +2794,9 @@
   const rowLanded = document.getElementById('rowLanded');
   const modalPay = document.getElementById('modalPay');
   const modalNext = document.getElementById('modalNext');
+  const modalComp = document.getElementById('modalComp');
   const modalWarn = document.getElementById('modalWarn');
+  const ENEMY_NAMES = { viper: 'dropships', hulk: 'hulks', dart: 'darts' };
   let summaryUntil = 0;
 
   function showSummary(wave, landed, pay) {
@@ -2780,11 +2805,19 @@
     rowLanded.classList.toggle('bad', landed > 0);   // a clean wave should look clean
     modalPay.textContent = '+' + pay;
     modalNext.textContent = wave + 1;
-    // the coming wave is already decided, so the card can warn about it:
-    // a growing fleet is the one thing worth spending the break answering
-    const ships = shipCountFor(wave + 1);
-    modalWarn.textContent = '⚠ mothership ' + ships + ' warps in';
-    modalWarn.classList.toggle('on', ships > shipCountFor(wave));
+    // the coming wave is already rolled, so the card prints its manifest:
+    // what is coming, by name and number
+    let rows = '';
+    if (G.nextComp) {
+      for (const t of ['viper', 'hulk', 'dart']) {
+        const c = G.nextComp.counts[t];
+        if (c) rows += '<div class="modal-row"><span>' + ENEMY_NAMES[t] + '</span><b>' + c + '</b></div>';
+      }
+    }
+    modalComp.innerHTML = rows;
+    // ...and warns about the one thing worth spending the whole break on
+    modalWarn.textContent = '⚠ An additional mothership approaches!';
+    modalWarn.classList.toggle('on', shipCountFor(wave + 1) > shipCountFor(wave));
     waveModal.classList.add('open');
     G.paused = true;                                 // the break stops here
     // autoplay just means the card dismisses itself; without it the game
