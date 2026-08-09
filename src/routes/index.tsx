@@ -23,9 +23,9 @@ export const Route = createFileRoute("/")({
 });
 
 function Index() {
+  // dvh, not vh: 100vh overflows the visible viewport behind mobile
+  // browser toolbars and would clip the game's bottom build bar
   return (
-    {/* dvh, not vh: 100vh overflows the visible viewport behind mobile
-        browser toolbars and would clip the game's bottom build bar */}
     <main className="h-dvh w-screen overflow-hidden bg-background">
       <h1 className="sr-only">Planet Defense</h1>
       <iframe
