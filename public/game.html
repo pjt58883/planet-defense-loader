@@ -1939,6 +1939,20 @@
     dart:  protoEnemyMesh(0x58c8ff, 0x0d2c48)
   };
 
+  //  Inverted-hull outlines: each enemy mesh gets a back-face twin drawn a
+  //  few percent larger in the same slot, so every hostile carries a light
+  //  red silhouette that separates it from terrain and sky alike.
+  const OUTLINE_SCALE = 1.06;
+  const outlineMat = new THREE.MeshBasicMaterial({ color: 0xffb8b8, side: THREE.BackSide });
+  const outlineMeshes = {};
+  for (const t in enemyMeshes) {
+    const m = new THREE.InstancedMesh(enemyMeshes[t].geometry, outlineMat, MAX_ALIENS);
+    m.count = 0;
+    m.frustumCulled = false;
+    world.add(m);
+    outlineMeshes[t] = m;
+  }
+
   //  Energy shields: one faint red shell per shielded enemy, drawn until
   //  the hull under it has lost the roster's shield fraction of its health.
   const SHIELD_R = 1.2;                // shell radius, in enemy scale units
@@ -1955,7 +1969,10 @@
 
   function clearEnemies() {
     aliens.length = 0;
-    for (const t in enemyMeshes) enemyMeshes[t].count = 0;
+    for (const t in enemyMeshes) {
+      enemyMeshes[t].count = 0;
+      outlineMeshes[t].count = 0;
+    }
     shieldMesh.count = 0;
   }
   const dummy = new THREE.Object3D();
@@ -2672,7 +2689,12 @@
         flame(alienPos, fZ, 0.94 * vk, tiles.meanInr * 0.10, BAL.flameLife);
       }
       dummy.updateMatrix();
-      enemyMeshes[a.type].setMatrixAt(drawn[a.type]++, dummy.matrix);
+      enemyMeshes[a.type].setMatrixAt(drawn[a.type], dummy.matrix);
+
+      // the outline twin: same pose, a few percent larger
+      dummy.scale.setScalar(vk * OUTLINE_SCALE);
+      dummy.updateMatrix();
+      outlineMeshes[a.type].setMatrixAt(drawn[a.type]++, dummy.matrix);
 
       // the shell rides the hull until half its health is gone
       const sh = BAL.enemies[a.type].shield;
@@ -2688,6 +2710,8 @@
     for (const t in enemyMeshes) {
       enemyMeshes[t].count = drawn[t];
       enemyMeshes[t].instanceMatrix.needsUpdate = true;
+      outlineMeshes[t].count = drawn[t];
+      outlineMeshes[t].instanceMatrix.needsUpdate = true;
     }
     shieldMesh.count = shields;
     shieldMesh.instanceMatrix.needsUpdate = true;
@@ -3099,13 +3123,14 @@
     }
 
     // swap the stand-ins out from under the enemy meshes so every existing
-    // reference stays valid
+    // reference stays valid; the outline twin shares the same geometry
     for (const t in enemyMeshes) {
       const m = enemyMeshes[t];
       m.geometry.dispose();
       m.material.dispose();
       m.geometry = parts[t].geo;
       m.material = parts[t].mat;
+      outlineMeshes[t].geometry = parts[t].geo;
     }
   }
 
@@ -3332,6 +3357,8 @@
     hideMothers();
     G.bearing = null;
     pickBearing();
+    // open on the first drop zone, so nobody starts a run by hunting for it
+    if (G.ships.length) swingTo(meanBearing());
     setBuild(null);
     G.ready = true;
     updateHud();
