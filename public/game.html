@@ -84,6 +84,16 @@
   .modal-row b{color:var(--ink);font-weight:400}
   .modal-row.bad b{color:#ff5f56}
   .modal-row.pay b{color:var(--hot)}
+  /* fleet warning: only present on the cards before a wave that adds a
+     mothership, and loud, because the answer to it costs a whole break */
+  .modal-warn{
+    display:none;
+    margin-top:14px;
+    color:#ff5f56;font-size:12px;letter-spacing:.18em;
+    text-transform:uppercase;
+    animation:hpPulse .9s ease-in-out infinite;
+  }
+  .modal-warn.on{display:block}
   .modal.open .modal-card{pointer-events:auto;visibility:visible}
   .modal-card button{margin-top:16px;width:100%}
 
@@ -322,6 +332,7 @@
       <div class="modal-row pay"><span>wave payout</span><b id="modalPay">0</b></div>
       <div class="modal-row"><span>next wave</span><b id="modalNext">2</b></div>
     </div>
+    <div class="modal-warn" id="modalWarn">⚠ another mothership warps in</div>
     <button id="modalBtn">Continue</button>
     <label class="check"><input type="checkbox" id="autoBox">autoplay: continue after 5s</label>
   </div>
@@ -613,6 +624,9 @@
     tiles = buildTiles(FREQS[freqIdx], RADIUS);
     const N = tiles.cells.length;
     cellType = new Array(N).fill('plain');
+    cellDead = new Uint8Array(N);
+    deadPos.length = 0;
+    rebuildDeadMesh();
     cellGeo = new Array(N);
     coast = new Array(N).fill(false);
     cornerLand = new Map();
@@ -1709,6 +1723,65 @@
     if (modelsOK) { gunMesh.count = guns; gunMesh.instanceMatrix.needsUpdate = true; }
   }
 
+  // ---------- dead ground ----------
+  //  A landing kills its hex for the rest of the run: whatever stood there
+  //  is lost, the tile is crossed out in red, and nothing can be built on
+  //  it again. Dead ground is the scar a wave leaves behind - integrity
+  //  heals nothing back, so the map itself keeps the score.
+  let cellDead = null;                 // one flag per cell, set by landings
+  const deadPos = [];                  // accumulated X-marker triangles
+  let deadMesh = null;
+  const deadMat = new THREE.MeshBasicMaterial({
+    color: 0xff2f2f, transparent: true, opacity: 0.9,
+    depthWrite: false, side: THREE.DoubleSide
+  });
+
+  function rebuildDeadMesh() {
+    if (deadMesh) { world.remove(deadMesh); deadMesh.geometry.dispose(); deadMesh = null; }
+    if (!deadPos.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(deadPos), 3));
+    deadMesh = new THREE.Mesh(g, deadMat);
+    deadMesh.frustumCulled = false;
+    world.add(deadMesh);
+  }
+
+  function killHex(ci) {
+    if (cellDead[ci]) return;
+    cellDead[ci] = 1;
+
+    const f = tileFit(ci);
+    const up = f.up;
+    const e1 = new THREE.Vector3(0, 0, 1);
+    if (Math.abs(up.z) > 0.9) e1.set(1, 0, 0);
+    e1.addScaledVector(up, -e1.dot(up)).normalize();
+    const e2 = new THREE.Vector3().crossVectors(up, e1);
+
+    // two bars at right angles; each is a short strip of quads projected
+    // back onto the sphere so the X hugs the ground instead of chording it
+    const L = f.fit * 0.82, W = f.fit * 0.16, SEG = 6;
+    const dir = new THREE.Vector3(), side = new THREE.Vector3();
+    for (const ang of [Math.PI / 4, -Math.PI / 4]) {
+      dir.copy(e1).multiplyScalar(Math.cos(ang)).addScaledVector(e2, Math.sin(ang));
+      side.crossVectors(up, dir).normalize();
+      const p = (t, w) => new THREE.Vector3().copy(up).multiplyScalar(RADIUS)
+        .addScaledVector(dir, t).addScaledVector(side, w).setLength(RADIUS * 1.004);
+      for (let s = 0; s < SEG; s++) {
+        const t0 = -L + (2 * L * s) / SEG, t1 = -L + (2 * L * (s + 1)) / SEG;
+        const a = p(t0, -W), b = p(t0, W), c = p(t1, W), d = p(t1, -W);
+        deadPos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z,
+                     a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+      }
+    }
+    rebuildDeadMesh();
+  }
+
+  function clearDead() {
+    if (cellDead) cellDead.fill(0);
+    deadPos.length = 0;
+    rebuildDeadMesh();
+  }
+
   // ---------- descending drops ----------
   const MAX_ALIENS = 400;
   //  Model length per enemy type, in model units. Placeholders are built to
@@ -2013,13 +2086,26 @@
   // it is a coin toss: turrets are static and a wave is over in twenty
   // seconds. So the NEXT bearing is chosen the moment the last wave ends and
   // drawn on the ground, and the break is the time you get to answer it.
+  //  Each ring is a thin ribbon mesh draped on the sphere, not a LineLoop:
+  //  WebGL ignores line widths, and a one-pixel thread is exactly the thing
+  //  players fail to find on a busy planet.
   const ZONE_SEG = 96;
+  const ZONE_HALF = 0.012;           // band half-width, radians on the sphere
   const zoneRings = [];
-  const zoneMat = new THREE.LineBasicMaterial({ color: 0xff5f56, transparent: true, opacity: 0.9 });
+  const zoneMat = new THREE.MeshBasicMaterial({
+    color: 0xff2f2f, transparent: true, opacity: 0.9,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  const zoneIdx = [];
+  for (let i = 0; i < ZONE_SEG; i++) {
+    const a = i * 2, b = a + 1, c = ((i + 1) % ZONE_SEG) * 2, d = c + 1;
+    zoneIdx.push(a, b, c, b, d, c);
+  }
   for (let i = 0; i < MAX_SHIPS; i++) {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ZONE_SEG * 3), 3));
-    const r = new THREE.LineLoop(g, zoneMat);
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ZONE_SEG * 6), 3));
+    g.setIndex(zoneIdx);
+    const r = new THREE.Mesh(g, zoneMat);
     r.frustumCulled = false;
     r.visible = false;
     world.add(r);
@@ -2151,14 +2237,18 @@
     zA.addScaledVector(bearing, -zA.dot(bearing)).normalize();
     zB.crossVectors(bearing, zA);
     const arr = ring.geometry.attributes.position.array;
-    const c = Math.cos(ang), s = Math.sin(ang);
     for (let i = 0; i < ZONE_SEG; i++) {
       const a = (i / ZONE_SEG) * Math.PI * 2;
-      zP.copy(bearing).multiplyScalar(c)
-        .addScaledVector(zA, s * Math.cos(a))
-        .addScaledVector(zB, s * Math.sin(a))
-        .setLength(RADIUS * 1.008);
-      arr[i*3] = zP.x; arr[i*3+1] = zP.y; arr[i*3+2] = zP.z;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      for (let k = 0; k < 2; k++) {           // inner and outer edge of the band
+        const ph = ang + (k ? ZONE_HALF : -ZONE_HALF);
+        zP.copy(bearing).multiplyScalar(Math.cos(ph))
+          .addScaledVector(zA, Math.sin(ph) * ca)
+          .addScaledVector(zB, Math.sin(ph) * sa)
+          .setLength(RADIUS * 1.008);
+        const o = (i * 2 + k) * 3;
+        arr[o] = zP.x; arr[o+1] = zP.y; arr[o+2] = zP.z;
+      }
     }
     ring.geometry.attributes.position.needsUpdate = true;
     ring.visible = true;
@@ -2296,7 +2386,9 @@
         a.alive = false;
         G.landed++;
         G.hp -= a.dmg;
-        say(demolish(a.ci) || 'BREACH');
+        const lost = demolish(a.ci);
+        killHex(a.ci);
+        say(lost || 'HEX DESTROYED');
         if (G.hp <= 0) { G.hp = 0; loseGame(); }
       }
     }
@@ -2472,6 +2564,7 @@
   const rowLanded = document.getElementById('rowLanded');
   const modalPay = document.getElementById('modalPay');
   const modalNext = document.getElementById('modalNext');
+  const modalWarn = document.getElementById('modalWarn');
   let summaryUntil = 0;
 
   function showSummary(wave, landed, pay) {
@@ -2480,6 +2573,11 @@
     rowLanded.classList.toggle('bad', landed > 0);   // a clean wave should look clean
     modalPay.textContent = '+' + pay;
     modalNext.textContent = wave + 1;
+    // the coming wave is already decided, so the card can warn about it:
+    // a growing fleet is the one thing worth spending the break answering
+    const ships = shipCountFor(wave + 1);
+    modalWarn.textContent = '⚠ mothership ' + ships + ' warps in';
+    modalWarn.classList.toggle('on', ships > shipCountFor(wave));
     waveModal.classList.add('open');
     G.paused = true;                                 // the break stops here
     // autoplay just means the card dismisses itself; without it the game
@@ -2835,6 +2933,7 @@
       else hideUnitCard();
       return;
     }
+    if (cellDead[ci]) { say('DEAD GROUND'); return; }
     // a fighter is based on a tile, not built on it, so it can sit over water
     const wet = cellType[ci] === 'lake';
     if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
@@ -2924,8 +3023,8 @@
     clearFighters();
     clearFoundries();
     clearEnemies();
+    clearDead();
     resetBullets();
-
     sCount = 0;
     smokeGeo.setDrawRange(0, 0);
     G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0;
@@ -3197,6 +3296,13 @@
       if (world.quaternion.angleTo(qWorldGoal) < 0.01) worldTween = false;
     }
     gameTick(dt);
+
+    // the next drop zone flashes slowly through the break so it cannot be
+    // missed on the far side of a busy planet; once the wave is live the
+    // ring holds steady. Reduced motion keeps it steady throughout.
+    zoneMat.opacity = (G.started && !G.over && !G.inWave && !reduced)
+      ? 0.2 + 0.8 * (0.5 + 0.5 * Math.sin(now * 0.003))
+      : 0.9;
 
     if (!dragging) {
       if (Math.abs(velX) > 1e-5 || Math.abs(velY) > 1e-5) {
