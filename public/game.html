@@ -258,6 +258,59 @@
     align-items:center;
     flex-wrap:wrap;
   }
+
+  /* the shop: image buttons stacked down the right edge, cost beside art */
+  .buildbar{
+    right:20px;top:50%;transform:translateY(-50%);
+    display:flex;flex-direction:column;gap:9px;
+    pointer-events:auto;
+  }
+  .buy{
+    display:flex;align-items:center;gap:10px;
+    padding:5px 12px 5px 6px;
+  }
+  .buy img{
+    width:46px;height:46px;display:block;
+    object-fit:contain;
+  }
+  .buy .cost{
+    font-size:15px;color:var(--hot);
+    font-variant-numeric:tabular-nums;letter-spacing:.08em;
+  }
+  .buy[aria-pressed="true"] .cost{color:var(--void)}
+
+  /* the one button that starts trouble on purpose: front and centre,
+     sized like the integrity/gold readouts so it cannot be missed */
+  .hud.bc{bottom:26px;left:50%;transform:translateX(-50%)}
+  .nextwave{
+    pointer-events:auto;
+    font-size:22px;letter-spacing:.24em;
+    padding:13px 30px;
+  }
+
+  /* the catalog: every unit on both sides, with its art and its job */
+  .catalog-card{min-width:400px;max-width:480px;text-align:left}
+  .catalog-title{
+    font-size:20px;letter-spacing:.30em;color:var(--hot);
+    text-transform:uppercase;text-align:center;
+  }
+  .catalog-list{
+    margin-top:14px;max-height:60vh;overflow-y:auto;
+    display:flex;flex-direction:column;gap:12px;padding-right:6px;
+  }
+  .cat-side{
+    color:var(--hot);font-size:12px;letter-spacing:.22em;
+    text-transform:uppercase;margin-top:6px;
+  }
+  .cat-row{display:flex;gap:12px;align-items:center}
+  .cat-row img{width:52px;height:52px;flex:none;object-fit:contain}
+  .cat-name{
+    color:var(--ink);font-size:12px;letter-spacing:.14em;
+    text-transform:uppercase;
+  }
+  .cat-name b{color:var(--hot);font-weight:400;margin-left:8px}
+  .cat-desc{color:var(--ink-dim);font-size:12px;line-height:1.55;margin-top:3px}
+  #catalogClose{margin-top:14px;width:100%}
   button{
     font:inherit;
     font-size:11px;
@@ -301,6 +354,11 @@
     .start-title{font-size:19px;letter-spacing:.22em}
     .sizes button{padding:8px 4px}
     .hplabel{font-size:20px;letter-spacing:.14em}
+    .buildbar{right:10px;gap:6px}
+    .buy img{width:36px;height:36px}
+    .nextwave{font-size:17px;padding:11px 20px}
+    .hud.bc{bottom:16px}
+    .catalog-card{min-width:0;width:92vw}
     .hpbar::after{background:repeating-linear-gradient(90deg,
       rgba(0,0,0,0) 0 14px, rgba(0,0,0,.55) 14px 16px)}
     button{padding:11px 12px}
@@ -321,6 +379,7 @@
     <div class="menu-panel" id="menuPanel">
       <button id="randBtn">New world</button>
       <button id="gridBtn">Grid: 362</button>
+      <button id="catalogBtn">Catalog</button>
       <span class="count" id="count"></span>
     </div>
   </div>
@@ -329,15 +388,21 @@
 <div class="hud bl">
   <div class="hint gone" id="hint"></div>
   <div class="bar">
-    <button id="buildBtn">Build turret (5)</button>
-    <button id="jetBtn">Build fighter (10)</button>
-    <button id="foundryBtn">Build foundry (20)</button>
-    <button id="cannonBtn">Build sea cannon (12)</button>
-    <button id="batteryBtn">Build missile battery (18)</button>
-    <button id="recoveryBtn">Build recovery team (15)</button>
-    <button id="waveBtn">Call wave</button>
     <button id="viewBtn">Surface view</button>
   </div>
+</div>
+
+<!-- the shop: one image button per buildable, cost beside the picture -->
+<div class="hud buildbar">
+  <button id="buildBtn" class="buy" title="Railgun turret"><img id="img-turret" alt="Railgun turret"><span class="cost">5</span></button>
+  <button id="jetBtn" class="buy" title="Fighter"><img id="img-jet" alt="Fighter"><span class="cost">10</span></button>
+  <button id="cannonBtn" class="buy" title="Sea cannon"><img id="img-cannon" alt="Sea cannon"><span class="cost">12</span></button>
+  <button id="batteryBtn" class="buy" title="Missile battery"><img id="img-battery" alt="Missile battery"><span class="cost">18</span></button>
+  <button id="recoveryBtn" class="buy" title="Recovery team"><img id="img-recovery" alt="Recovery team"><span class="cost">15</span></button>
+</div>
+
+<div class="hud bc">
+  <button id="waveBtn" class="nextwave">Next Wave</button>
 </div>
 
 <div class="modal open" id="startModal">
@@ -375,6 +440,14 @@
   <div class="unit-row" id="unitRateRow"><span>attack speed</span><b id="unitRate"></b></div>
   <div class="unit-row"><span>level</span><b id="unitLvl"></b></div>
   <button id="unitUpgBtn">Upgrade</button>
+</div>
+
+<div class="modal" id="catalogModal">
+  <div class="modal-card catalog-card">
+    <div class="catalog-title">Catalog</div>
+    <div class="catalog-list" id="catalogList"></div>
+    <button id="catalogClose">Close</button>
+  </div>
 </div>
 
 <div class="hud tc">
@@ -977,7 +1050,7 @@
     cannonRange: 1,                         // extra rings over a land turret
     cannonCeiling: 0.35,
     cannonRate: 0.85, cannonDmg: 20,        // slower, heavier
-    alienN:     w => 5 + w * 3,
+    alienN:     w => 10 + w * 6,
     rampWaves:  22,                         // waves to reach the widest launch
     zoneMin:    0.38,                       // launch cone half-angle, radians
     zoneMax:    1.45,                       // ~83 degrees, most of a hemisphere
@@ -992,7 +1065,7 @@
     alienHp:    w => 18 + w * 5,
     alienSpeed: w => 0.069 + w * 0.005,       // sphere radii per second
     spawnGap:   0.55,
-    income:     w => 5 * w,                 // five per wave cleared, plus the foundries
+    income:     w => 5 * w,                 // five per wave cleared
     landDamage: 7,
     // ---- enemy roster. hp/speed/dmg multiply the wave's base numbers; pay
     //      is the bounty for that type; size is a length in tile inradii.
@@ -1024,8 +1097,6 @@
     summaryTime: 5,                         // seconds the wave report lingers
     startGold:  25,
     aimAtBuilt: 0.6,                        // odds a pod picks an occupied tile
-    foundryCost: 20,
-    foundryYield: 5,                        // gold per wave cleared, on plain ground
     jetCost:    10,
     jetRing:    4,                          // patrol circle, in tile rings
     jetSpeed:   1.20,                       // radians of arc per second
@@ -1052,13 +1123,15 @@
     batteryRange: 3,                        // rings; no mountain bonus
     batteryCeiling: 1.30,                   // engages higher than any turret
     batteryRate: 2.2, batteryDmg: 30,       // one slow, heavy shell
+    gunTurn:    4.2,                        // radians/s a railgun mount slews
+    batteryTurn: 1.8,                       // the launcher swings heavier
+    aimSettle:  0.05,                       // radians off-solution a mount may fire at
     splashRadius: 2.2,                      // burst radius, tile inradii
     splashDmg: 14,                          // dealt to everything else in it
     upgradeMax: 3,                          // levels a building can reach
     upgradeCost: (base, lvl) => Math.ceil(base * 0.6 * lvl),   // lvl being bought
     upgradeDmg: 1.5,                        // per level, anything that shoots
     upgradeCeil: 0.10,                      // per level, turret-family ceilings
-    upgradeYield: 1.5,                      // per level, foundry income
     driftMin: 0.30, driftMax: 0.85,         // radians the drop zone walks per wave
     autoFace: false,                        // swing the planet to face a new drop zone
     dryWaves: 10,                           // waves that get a mostly-dry landing zone
@@ -1288,7 +1361,8 @@
       aimDir: up.clone(),
       cover: ringSet(ci, BAL.range + (onRock ? BAL.rockRange : 0)),
       ceiling: BAL.ceiling + (onRock ? BAL.rockCeiling : 0),
-      rate: BAL.rate, dmg: BAL.dmg, cool: 0
+      rate: BAL.rate, dmg: BAL.dmg, cool: 0,
+      turn: BAL.gunTurn
     };
     tur.pos = up.clone().multiplyScalar(RADIUS + (GUN_SEAT + GUN_TIP) * k);
     towers.push(tur);
@@ -1523,87 +1597,10 @@
     }
   }
 
-  // =====================================================================
-  //  FOUNDRIES
-  //
-  //  The economy building, and the first thing in the game that makes
-  //  terrain mean something. A foundry pays out continuously, scaled by
-  //  what it is standing on, and it occupies a tile that could have held a
-  //  gun instead. That is the whole decision: every foundry is a hole in
-  //  your defence that pays for more defence somewhere else.
-  // =====================================================================
-  const FOUNDRY_R = 1.242;                   // model's widest footprint radius
-  const foundries = [];
-  const foundryAt = new Map();
-
-  const ORE = {                              // gold per wave, by what it stands on
-    mountain: 8,
-    desert:   7,
-    plain:    5,
-    forest:   4,
-    swamp:    3
-  };
-
-  let foundryMesh = null;
-
-  const foQ = new THREE.Quaternion(), foSpin = new THREE.Quaternion();
-
-  function placeFoundry(ci) {
-    if (foundries.length >= MAX_TURRETS) return null;
-    const f = tileFit(ci);
-    const rate = ORE[cellType[ci]] || BAL.foundryYield;
-    const fo = { ci, rate, level: 1, up: f.up.clone(), mat: new THREE.Matrix4() };
-    foundries.push(fo);
-    foundryAt.set(ci, fo);
-
-    if (foundryMesh) {
-      const i = foundries.length - 1;
-      const k = f.fit / FOUNDRY_R;
-      mPos.copy(f.up).multiplyScalar(RADIUS - f.fit * 0.05);
-      foQ.setFromUnitVectors(LOCAL_UP, f.up);
-      foSpin.setFromAxisAngle(LOCAL_UP, Math.random() * Math.PI * 2);  // vary the look
-      foQ.multiply(foSpin);
-      mScale.setScalar(k);
-      fo.mat.compose(mPos, foQ, mScale);
-      foundryMesh.setMatrixAt(i, fo.mat);
-      foundryMesh.count = foundries.length;
-      foundryMesh.instanceMatrix.needsUpdate = true;
-    }
-    return fo;
-  }
-
-  function clearFoundries() {
-    foundries.length = 0;
-    foundryAt.clear();
-    if (foundryMesh) foundryMesh.count = 0;
-  }
-
-  function foundryIncome() {
-    let g = 0;
-    for (let i = 0; i < foundries.length; i++) g += foundries[i].rate;
-    return g;
-  }
-
-  //  Anything that touches down flattens whatever was on that tile. Without
-  //  this a foundry is a free win: the drop zone is a couple of dozen tiles
-  //  out of hundreds, so you could pave the far side of the planet and never
-  //  pay for it. Now the drifting front eventually walks through your
-  //  industry, and where you put the money is a real bet.
   //  A landing flattens EVERYTHING on the tile: a hex can host a tower and
   //  base a fighter at once, and both die with the ground under them.
   function demolish(ci) {
     const lost = [];
-    if (foundryAt.has(ci)) {
-      const i = foundries.indexOf(foundryAt.get(ci));
-      foundries.splice(i, 1);
-      foundryAt.delete(ci);
-      if (foundryMesh) {
-        for (let n = 0; n < foundries.length; n++) foundryMesh.setMatrixAt(n, foundries[n].mat);
-        foundryMesh.count = foundries.length;
-        foundryMesh.instanceMatrix.needsUpdate = true;
-      }
-      lost.push('FOUNDRY');
-    }
     if (towerAt.has(ci)) {
       const kind = towerAt.get(ci).kind;
       towers.splice(towers.indexOf(towerAt.get(ci)), 1);
@@ -1674,6 +1671,7 @@
   function hideMothers() {
     for (const m of motherMeshes) m.visible = false;
     for (const r of zoneRings) r.visible = false;
+    for (const c of zoneCaps) c.visible = false;
   }
 
   // =====================================================================
@@ -1715,7 +1713,8 @@
       pos: up.clone().multiplyScalar(seatY + GUN_TIP * kg),
       cover: ringSet(ci, BAL.range + BAL.cannonRange),
       ceiling: BAL.ceiling + BAL.cannonCeiling,
-      rate: BAL.cannonRate, dmg: BAL.cannonDmg, cool: 0
+      rate: BAL.cannonRate, dmg: BAL.cannonDmg, cool: 0,
+      turn: BAL.gunTurn
     };
 
     // both hulls share the tile's axis, so the stack cannot drift apart
@@ -1767,7 +1766,8 @@
       cover: ringSet(ci, BAL.batteryRange),
       ceiling: BAL.batteryCeiling,
       rate: BAL.batteryRate, dmg: BAL.batteryDmg,
-      splashDmg: BAL.splashDmg, cool: 0
+      splashDmg: BAL.splashDmg, cool: 0,
+      turn: BAL.batteryTurn
     };
     if (modelsOK) {
       mPos.copy(up).multiplyScalar(RADIUS - f.fit * 0.04);
@@ -2021,7 +2021,7 @@
   //  with a local scale-up, so whatever moves (gun barrels, launchers)
   //  drags its outline along for free.
   let padOutline = null, gunOutline = null, platOutline = null, coreOutline = null,
-      batteryOutline = null, foundryOutline = null, recoveryOutline = null;
+      batteryOutline = null, recoveryOutline = null;
   const OUTLINE_M = new THREE.Matrix4().makeScale(OUTLINE_SCALE, OUTLINE_SCALE, OUTLINE_SCALE);
   const oTmp = new THREE.Matrix4();
 
@@ -2394,7 +2394,7 @@
   }
 
   const alienPos = new THREE.Vector3(), aim = new THREE.Vector3(),
-        muzzle = new THREE.Vector3();
+        muzzle = new THREE.Vector3(), qAimGoal = new THREE.Quaternion();
   function posOf(a) { return alienPos.copy(a.dir).multiplyScalar(RADIUS + a.alt); }
 
   function nearestCell(dir) {
@@ -2508,6 +2508,60 @@
     r.visible = false;
     world.add(r);
     zoneRings.push(r);
+  }
+
+  //  Inside each zone, faint red rings ripple INWARD from the rim toward
+  //  the centre. When several huge zones overlap, the direction of travel
+  //  is what tells you which side of a line is inside: ripples always run
+  //  away from the boundary you are looking at, toward its own middle.
+  const CAP_K = 18, CAP_S = 64, CAP_FLO = 0.12;   // radial rings, segments, innermost fraction
+  const rippleMat = new THREE.ShaderMaterial({
+    uniforms: { uT: { value: 0 } },
+    transparent: true,
+    depthWrite: false,
+    vertexShader: `
+      attribute float frac;
+      varying float vF;
+      void main() {
+        vF = frac;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }`,
+    fragmentShader: `
+      uniform float uT;
+      varying float vF;
+      void main() {
+        // three bands per zone, drifting toward lower frac as uT grows
+        float d = abs(fract(vF * 3.0 + uT * 0.4) - 0.5);
+        float ring = smoothstep(0.10, 0.02, d);
+        float a = ring * 0.28 * smoothstep(0.08, 0.35, vF);   // dissolve before the middle
+        if (a < 0.003) discard;
+        gl_FragColor = vec4(1.0, 0.184, 0.184, a);
+      }`
+  });
+  const capIdx = [];
+  for (let j = 0; j < CAP_K - 1; j++) {
+    for (let i = 0; i < CAP_S; i++) {
+      const a = j * CAP_S + i, b = j * CAP_S + (i + 1) % CAP_S;
+      const c = a + CAP_S, d = b + CAP_S;
+      capIdx.push(a, b, c, b, d, c);
+    }
+  }
+  const zoneCaps = [];
+  for (let i = 0; i < MAX_SHIPS; i++) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(CAP_K * CAP_S * 3), 3));
+    const fr = new Float32Array(CAP_K * CAP_S);
+    for (let j = 0; j < CAP_K; j++) {
+      const f = CAP_FLO + (1 - CAP_FLO) * j / (CAP_K - 1);
+      for (let s = 0; s < CAP_S; s++) fr[j * CAP_S + s] = f;
+    }
+    g.setAttribute('frac', new THREE.BufferAttribute(fr, 1));
+    g.setIndex(capIdx);
+    const m = new THREE.Mesh(g, rippleMat);
+    m.frustumCulled = false;
+    m.visible = false;
+    world.add(m);
+    zoneCaps.push(m);
   }
 
   // The bearing WALKS, it does not teleport. A fresh random point on the
@@ -2629,7 +2683,10 @@
       G.ships[i].ang = G.zoneAng;
       drawZone(i, G.ships[i].bearing, G.zoneAng);
     }
-    for (let i = G.ships.length; i < MAX_SHIPS; i++) zoneRings[i].visible = false;
+    for (let i = G.ships.length; i < MAX_SHIPS; i++) {
+      zoneRings[i].visible = false;
+      zoneCaps[i].visible = false;
+    }
 
     G.bearing = G.ships[0].bearing;      // the sim and the camera still want one
     placeMothers();
@@ -2669,6 +2726,25 @@
     }
     ring.geometry.attributes.position.needsUpdate = true;
     ring.visible = true;
+
+    // the ripple cap under the ring: same basis, graded cone angles
+    const cap = zoneCaps[idx];
+    const cArr = cap.geometry.attributes.position.array;
+    for (let j = 0; j < CAP_K; j++) {
+      const ph = ang * (CAP_FLO + (1 - CAP_FLO) * j / (CAP_K - 1));
+      const cp = Math.cos(ph), sp = Math.sin(ph);
+      for (let s = 0; s < CAP_S; s++) {
+        const a = (s / CAP_S) * Math.PI * 2;
+        zP.copy(bearing).multiplyScalar(cp)
+          .addScaledVector(zA, sp * Math.cos(a))
+          .addScaledVector(zB, sp * Math.sin(a))
+          .setLength(RADIUS * 1.006);
+        const o = (j * CAP_S + s) * 3;
+        cArr[o] = zP.x; cArr[o + 1] = zP.y; cArr[o + 2] = zP.z;
+      }
+    }
+    cap.geometry.attributes.position.needsUpdate = true;
+    cap.visible = true;
   }
 
   function startWave() {
@@ -2696,7 +2772,7 @@
 
       // they aim for what you built, not empty ground, so the telegraph is a
       // warning about your own stuff rather than an abstract patch of dirt
-      const built = cand.filter(ci => towerAt.has(ci) || fighterAt.has(ci) || foundryAt.has(ci));
+      const built = cand.filter(ci => towerAt.has(ci) || fighterAt.has(ci));
 
       // the wave splits across the fleet; the remainder goes to the first ships
       const share = Math.floor(n / fleet) + (si < n % fleet ? 1 : 0);
@@ -2749,7 +2825,7 @@
   function endWave() {
     G.inWave = false;
     G.breakLeft = BAL.breakTime;
-    const pay = BAL.income(G.wave) + foundryIncome();
+    const pay = BAL.income(G.wave);
     G.gold += pay;
     tickRecoveries();                // a wave survived is a wave of digging
     pickBearing();                   // the next wave exists before the card
@@ -2876,10 +2952,16 @@
       }
       if (aim.lengthSq() > 1e-9) {
         aim.normalize();
-        t.aimDir.copy(aim);
-        t.aimQ.setFromUnitVectors(LOCAL_UP, aim);
+        // the mount slews toward the solution at its own rate instead of
+        // snapping, and the barrel direction is wherever it actually points
+        qAimGoal.setFromUnitVectors(LOCAL_UP, aim);
+        t.aimQ.rotateTowards(qAimGoal, t.turn * dt);
+        t.aimDir.copy(LOCAL_UP).applyQuaternion(t.aimQ);
       }
       if (!best || t.cool > 0) continue;
+      // a gun can only shoot where its barrel points: hold fire until the
+      // swing has settled onto the firing solution
+      if (t.aimDir.angleTo(aim) > BAL.aimSettle) continue;
       t.cool = t.rate;
       // both kinds fire from the tip of whatever is doing the aiming
       muzzle.copy(t.aimDir)
@@ -2897,7 +2979,6 @@
     mirrorOutline(platMesh, platOutline);
     mirrorOutline(coreMesh, coreOutline);
     mirrorOutline(batteryMesh, batteryOutline);
-    mirrorOutline(foundryMesh, foundryOutline);
     mirrorOutline(recoveryMesh, recoveryOutline);
 
     // the dig crews' sidearms: short reach, low ceiling, but every shot
@@ -3006,12 +3087,20 @@
   const alertEl = document.getElementById('alert');
   const buildBtn = document.getElementById('buildBtn');
   const jetBtn = document.getElementById('jetBtn');
-  const foundryBtn = document.getElementById('foundryBtn');
   const cannonBtn = document.getElementById('cannonBtn');
   const batteryBtn = document.getElementById('batteryBtn');
   const recoveryBtn = document.getElementById('recoveryBtn');
   const waveBtn = document.getElementById('waveBtn');
   let alertUntil = 0;
+
+  // the shop buttons carry their price beside the art
+  for (const [id, cost] of [['buildBtn', BAL.turretCost], ['jetBtn', BAL.jetCost],
+       ['cannonBtn', BAL.cannonCost], ['batteryBtn', BAL.batteryCost],
+       ['recoveryBtn', BAL.recoveryCost]]) {
+    const b = document.getElementById(id);
+    b.querySelector('.cost').textContent = cost;
+    b.title += ' (' + cost + ' gold)';
+  }
 
   function say(msg, sticky) {
     alertEl.textContent = msg;
@@ -3032,21 +3121,14 @@
     const left = Math.max(0, Math.ceil(G.breakLeft - 1e-6));
     nextVal.textContent = G.over ? '\u2014' : G.inWave ? 'inbound' : left + 's';
     nextStat.classList.toggle('soon', !G.over && !G.inWave && left <= 5);
-    buildBtn.textContent = 'Build turret (' + BAL.turretCost + ')';
-    jetBtn.textContent = 'Build fighter (' + BAL.jetCost + ')';
-    foundryBtn.textContent = 'Build foundry (' + BAL.foundryCost + ')';
-    cannonBtn.textContent = 'Build sea cannon (' + BAL.cannonCost + ')';
+    waveBtn.disabled = G.inWave || G.over;
     cannonBtn.disabled = G.gold < BAL.cannonCost && G.build !== 'cannon';
     cannonBtn.setAttribute('aria-pressed', G.build === 'cannon' ? 'true' : 'false');
-    batteryBtn.textContent = 'Build missile battery (' + BAL.batteryCost + ')';
     batteryBtn.disabled = G.gold < BAL.batteryCost && G.build !== 'battery';
     batteryBtn.setAttribute('aria-pressed', G.build === 'battery' ? 'true' : 'false');
-    recoveryBtn.textContent = 'Build recovery team (' + BAL.recoveryCost + ')';
     recoveryBtn.disabled = G.gold < BAL.recoveryCost && G.build !== 'recovery';
     recoveryBtn.setAttribute('aria-pressed', G.build === 'recovery' ? 'true' : 'false');
     if (selCi !== null) refreshUnitCard();
-    foundryBtn.disabled = G.gold < BAL.foundryCost && G.build !== 'foundry';
-    foundryBtn.setAttribute('aria-pressed', G.build === 'foundry' ? 'true' : 'false');
     buildBtn.disabled = G.gold < BAL.turretCost && G.build !== 'turret';
     jetBtn.disabled = G.gold < BAL.jetCost && G.build !== 'fighter';
     buildBtn.setAttribute('aria-pressed', G.build === 'turret' ? 'true' : 'false');
@@ -3065,7 +3147,6 @@
         G.build === 'turret'  ? 'Tap a tile to place a turret. Mountains give extra reach. Water is unbuildable.'
       : G.build === 'fighter' ? 'Tap any tile to base a fighter, water included. It patrols that tile\u2019s circle and closes to gun range.'
       : G.build === 'cannon' ? 'Tap a WATER tile to float a sea cannon. Longer reach and a heavier shell than a land turret.'
-      : G.build === 'foundry' ? 'Tap a tile to build a foundry. It pays on each wave cleared: mountain 8, desert 7, plain 5, forest 4, swamp 3.'
       : G.build === 'battery' ? 'Tap a land tile to build a missile battery. Slow, heavy shells that burst on impact and damage everything nearby.'
       : G.build === 'recovery' ? 'Tap a crossed-out tile to send a recovery team. The dig takes one wave for every wave the tile has been lost.'
       : '';
@@ -3074,7 +3155,6 @@
 
   buildBtn.addEventListener('click', () => setBuild(G.build === 'turret' ? null : 'turret'));
   jetBtn.addEventListener('click', () => setBuild(G.build === 'fighter' ? null : 'fighter'));
-  foundryBtn.addEventListener('click', () => setBuild(G.build === 'foundry' ? null : 'foundry'));
   cannonBtn.addEventListener('click', () => setBuild(G.build === 'cannon' ? null : 'cannon'));
   batteryBtn.addEventListener('click', () => setBuild(G.build === 'battery' ? null : 'battery'));
   recoveryBtn.addEventListener('click', () => setBuild(G.build === 'recovery' ? null : 'recovery'));
@@ -3190,7 +3270,13 @@
   });
 
   document.getElementById('modalBtn').addEventListener('click', hideSummary);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hideSummary(); hideUnitCard(); } });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      hideSummary();
+      hideUnitCard();
+      document.getElementById('catalogModal').classList.remove('open');
+    }
+  });
 
   // ---------- unit card ----------
   //  Tap one of your buildings (with no build mode armed) and this pops up
@@ -3237,10 +3323,8 @@
       unitUpgBtn.disabled = true;
       return;
     } else {
-      unitName.textContent = 'Foundry';
-      unitDmgLabel.textContent = 'yield';
-      unitDmg.textContent = b.rate + ' gold/wave';
-      unitRateRow.style.display = 'none';
+      hideUnitCard();
+      return;
     }
     unitLvl.textContent = b.level + ' / ' + BAL.upgradeMax;
 
@@ -3292,7 +3376,6 @@
     pad:     ['/assets/pad.glb',     '/__l5e/assets-v1/ed785583-b953-46d5-ab3f-e50d5d30ff44/pad.glb'],
     gun:     ['/assets/gun.glb',     '/__l5e/assets-v1/133193a7-4cfb-472e-b1b9-78777d72ff7a/gun.glb'],
     jet:     ['/assets/jet.glb',     '/__l5e/assets-v1/aa131bb3-9b03-4489-b483-5ab9fe50aa00/jet.glb'],
-    foundry: ['/assets/foundry.glb', '/__l5e/assets-v1/9da45853-b69f-416c-9044-3847846ee13c/foundry.glb'],
     mother:  ['/assets/mother.glb',  '/__l5e/assets-v1/a43bfc6e-27db-4579-b762-be7ff49cf039/mother.glb'],
     // the descending enemy flies the dropship; the old viper stays behind
     // it as a fallback (decimated from the 33 MB source export, nose baked
@@ -3338,10 +3421,6 @@
         geo = new THREE.ConeGeometry(JET_LEN * 0.22, JET_LEN, 6);
         geo.rotateX(-Math.PI / 2);                      // nose down -Z
         color = 0xd0d6df; break;
-      case 'foundry':
-        geo = new THREE.CylinderGeometry(FOUNDRY_R * 0.75, FOUNDRY_R, 1.0, 8);
-        geo.translate(0, 0.5, 0);
-        color = 0xb08a4f; break;
       case 'mother':
         geo = new THREE.CylinderGeometry(MOTHER_LEN * 0.18, MOTHER_LEN * 0.26, MOTHER_LEN, 8);
         geo.rotateX(-Math.PI / 2);                      // long axis on Z, nose -Z
@@ -3408,7 +3487,6 @@
     jetOutlineMesh.frustumCulled = false;
     jetOutlineMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     world.add(jetOutlineMesh);
-    foundryMesh = instanced(parts.foundry, MAX_TURRETS, false);
     platMesh = instanced(parts.hover, MAX_TURRETS, true);
     coreMesh = instanced(parts.core, MAX_TURRETS, true);
     batteryMesh = instanced(parts.battery, MAX_TURRETS, true);   // it slews to aim
@@ -3426,7 +3504,6 @@
     platOutline = makeAllyOutline(parts.hover.geo, MAX_TURRETS);
     coreOutline = makeAllyOutline(parts.core.geo, MAX_TURRETS);
     batteryOutline = makeAllyOutline(parts.battery.geo, MAX_TURRETS);
-    foundryOutline = makeAllyOutline(parts.foundry.geo, MAX_TURRETS);
     recoveryOutline = makeAllyOutline(parts.recovery.geo, MAX_TURRETS);
 
     // both projectiles are authored nose-up (+Y); lay them onto -Z once so
@@ -3462,6 +3539,132 @@
     }
   }
 
+  // ---------- catalog & button art ----------
+  //
+  //  Every button and catalog entry shows the unit's real model: each rig
+  //  is assembled from the loaded parts and rendered once to a small
+  //  canvas. Hand-made art dropped into public/assets/ui/<key>.png wins
+  //  over the live render.
+  const thumbs = {};
+
+  function setArt(img, key) {
+    img.onerror = () => { img.onerror = null; img.src = thumbs[key]; };
+    img.src = '/assets/ui/' + key + '.png';
+  }
+
+  function makeThumbs(parts) {
+    const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    r.setSize(128, 128);
+    r.outputEncoding = THREE.sRGBEncoding;
+    const sc = new THREE.Scene();
+    sc.add(new THREE.HemisphereLight(0xcfe0ff, 0x333322, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff0dd, 1.5);
+    sun.position.set(3, 5, 4);
+    sc.add(sun);
+    const cam = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
+
+    const part = (p, s, y) => {
+      const m = new THREE.Mesh(p.geo, p.mat);
+      if (s) m.scale.setScalar(s);
+      if (y) m.position.y = y;
+      return m;
+    };
+    const kc = PLAT_R * CORE_FIT / CORE_R;
+    const RIGS = {
+      turret:   () => [part(parts.pad), part(parts.gun, 1, GUN_SEAT)],
+      battery:  () => [part(parts.pad), part(parts.battery, PAD_R / BATTERY_R, GUN_SEAT)],
+      cannon:   () => [part(parts.hover), part(parts.core, kc, PLAT_DECK),
+                       part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
+      jet:      () => [part(parts.jet)],
+      recovery: () => [part(parts.recovery)],
+      dropship: () => [part(parts.viper)],
+      dart:     () => [part(parts.dart)],
+      hulk:     () => [part(parts.hulk)],
+      mothership: () => [part(parts.mother)]
+    };
+    const box = new THREE.Box3(), sph = new THREE.Sphere();
+    for (const k in RIGS) {
+      const g = new THREE.Group();
+      for (const m of RIGS[k]()) g.add(m);
+      sc.add(g);
+      box.setFromObject(g).getBoundingSphere(sph);
+      const d = sph.radius * 2.7;
+      cam.position.set(sph.center.x + d * 0.62, sph.center.y + d * 0.42, sph.center.z + d * 0.66);
+      cam.lookAt(sph.center);
+      r.render(sc, cam);
+      thumbs[k] = r.domElement.toDataURL();
+      sc.remove(g);
+    }
+    r.dispose();
+
+    for (const [id, k] of [['img-turret', 'turret'], ['img-jet', 'jet'],
+         ['img-cannon', 'cannon'], ['img-battery', 'battery'],
+         ['img-recovery', 'recovery']]) {
+      setArt(document.getElementById(id), k);
+    }
+    buildCatalog();
+  }
+
+  //  What each thing is FOR, in one breath apiece.
+  const CATALOG = [
+    ['side', 'Your forces'],
+    ['turret', 'Railgun Turret', BAL.turretCost,
+     'The line gun. Leads its shots and slews fast; mountains stretch its reach and ceiling.'],
+    ['jet', 'Fighter', BAL.jetCost,
+     'Patrols a circle around its base hex and dives on anything inside it. Based, not built - it shares its hex with a tower. Darts hunt it.'],
+    ['cannon', 'Sea Cannon', BAL.cannonCost,
+     'The water build: a floating railgun with longer reach, a heavier slug and a higher ceiling than a land turret.'],
+    ['battery', 'Missile Battery', BAL.batteryCost,
+     'Slow homing missiles that burst on impact and splash everything nearby. Engages highest of all; the launcher swings heavy.'],
+    ['recovery', 'Recovery Team', BAL.recoveryCost,
+     'The only thing that builds on dead ground. Digs a crossed-out tile back out, one wave of work per wave it has been lost, and defends itself with sidearms.'],
+    ['side', 'The enemy'],
+    ['dropship', 'Dropship', null,
+     'The line trooper. Falls from its mothership toward a telegraphed tile; anything that lands kills the hex under it.'],
+    ['dart', 'Dart', null,
+     'Fast interceptor. Hunts your fighters inside its own landing zone before landing; only a clear sky sends it groundward.'],
+    ['hulk', 'Hulk', null,
+     'Armoured transport behind an energy shield. The shield falls at half health, and a landed hulk hits the ground twice as hard.'],
+    ['mothership', 'Mothership', null,
+     'Holds station off-planet and launches the wave into its drop zone. More arrive as the waves go on, each picking its own bearing.']
+  ];
+
+  function buildCatalog() {
+    const list = document.getElementById('catalogList');
+    list.innerHTML = '';
+    for (const e of CATALOG) {
+      if (e[0] === 'side') {
+        const h = document.createElement('div');
+        h.className = 'cat-side';
+        h.textContent = e[1];
+        list.appendChild(h);
+        continue;
+      }
+      const row = document.createElement('div');
+      row.className = 'cat-row';
+      const img = document.createElement('img');
+      img.alt = e[1];
+      setArt(img, e[0]);
+      const txt = document.createElement('div');
+      const name = document.createElement('div');
+      name.className = 'cat-name';
+      name.textContent = e[1];
+      if (e[2] !== null) {
+        const b = document.createElement('b');
+        b.textContent = e[2] + ' gold';
+        name.appendChild(b);
+      }
+      const desc = document.createElement('div');
+      desc.className = 'cat-desc';
+      desc.textContent = e[3];
+      txt.appendChild(name);
+      txt.appendChild(desc);
+      row.appendChild(img);
+      row.appendChild(txt);
+      list.appendChild(row);
+    }
+  }
+
   const startBtn = document.getElementById('startBtn');
 
   async function loadModels() {
@@ -3486,6 +3689,7 @@
       parts[n] = placeholderPart(n);
     }));
     buildModels(parts);
+    makeThumbs(parts);
     if (missing.length) console.warn('models missing, using placeholders:', missing.join(', '));
     const gone = missing.filter(n => !OPTIONAL_MODELS.has(n));
     if (gone.length) say('MODELS MISSING: ' + gone.join(', ').toUpperCase(), true);
@@ -3534,6 +3738,14 @@
   menuPanel.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', () => setMenu(false));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setMenu(false); });
+
+  // ---------- catalog ----------
+  const catalogModal = document.getElementById('catalogModal');
+  document.getElementById('catalogBtn').addEventListener('click', () => {
+    setMenu(false);
+    catalogModal.classList.add('open');
+  });
+  document.getElementById('catalogClose').addEventListener('click', () => catalogModal.classList.remove('open'));
 
   // ---------- picking ----------
   const raycaster = new THREE.Raycaster();
@@ -3585,7 +3797,7 @@
     // tower nor is blocked by one. Only a second fighter is refused.
     if (G.build === 'fighter') {
       if (fighterAt.has(ci)) { say('FIGHTER ALREADY BASED HERE'); return; }
-    } else if (towerAt.has(ci) || foundryAt.has(ci)) {
+    } else if (towerAt.has(ci)) {
       say('TILE OCCUPIED'); return;
     }
 
@@ -3603,14 +3815,6 @@
       return;
     }
 
-    if (G.build === 'foundry') {
-      if (foundries.length >= MAX_TURRETS) { say('FOUNDRY LIMIT REACHED'); return; }
-      if (G.gold < BAL.foundryCost) { say('NOT ENOUGH GOLD'); return; }
-      G.gold -= BAL.foundryCost;
-      const fo = placeFoundry(ci);
-      if (fo) say('FOUNDRY ' + fo.rate + ' GOLD/WAVE');
-      return;
-    }
     if (G.build === 'fighter') {
       if (fighters.length >= MAX_TURRETS) { say('FIGHTER LIMIT REACHED'); return; }
       if (G.gold < BAL.jetCost) { say('NOT ENOUGH GOLD'); return; }
@@ -3630,8 +3834,8 @@
   //  Three levels per building, paid for in place through the unit card
   //  that opens when you tap one of your buildings. The price is a share
   //  of the building's own cost times the level being bought, so growing a
-  //  cheap turret stays cheap and a foundry tier costs real money. Guns
-  //  gain damage and ceiling; foundries pay more. The upgrade dies with
+  //  cheap turret stays cheap. Guns gain damage and ceiling; fighters
+  //  gain damage. The upgrade dies with
   //  the building - a levelled turret is a bigger bet on the same square
   //  of ground, which is the point.
   // =====================================================================
@@ -3641,12 +3845,12 @@
 
   function buildingAt(ci) {
     // the fighter comes last: on a shared hex the card shows the hardware
-    return towerAt.get(ci) || foundryAt.get(ci) || recoveryAt.get(ci) || fighterAt.get(ci) || null;
+    return towerAt.get(ci) || recoveryAt.get(ci) || fighterAt.get(ci) || null;
   }
 
   function upgradeBase(ci) {
     const t = towerAt.get(ci);
-    return t ? BAL[UPG_BASE[t.kind]] : fighterAt.has(ci) ? BAL.jetCost : BAL.foundryCost;
+    return t ? BAL[UPG_BASE[t.kind]] : BAL.jetCost;
   }
 
   function upgradeAt(ci) {
@@ -3661,10 +3865,8 @@
       b.dmg = Math.round(b.dmg * BAL.upgradeDmg);
       if (b.splashDmg) b.splashDmg = Math.round(b.splashDmg * BAL.upgradeDmg);
       b.ceiling += BAL.upgradeCeil;
-    } else if (fighterAt.get(ci) === b) {
-      b.dmg = Math.round(b.dmg * BAL.upgradeDmg);
     } else {
-      b.rate = Math.ceil(b.rate * BAL.upgradeYield);
+      b.dmg = Math.round(b.dmg * BAL.upgradeDmg);   // the fighter's guns
     }
     say('LEVEL ' + b.level);
   }
@@ -3672,7 +3874,6 @@
   function resetGame() {
     clearTurrets();
     clearFighters();
-    clearFoundries();
     clearRecoveries();
     clearEnemies();
     clearDead();
@@ -3928,7 +4129,6 @@
     if (e.key === 'r' || e.key === 'R') randomise();
     if (e.key === 'b' || e.key === 'B') setBuild(G.build === 'turret' ? null : 'turret');
     if (e.key === 'f' || e.key === 'F') setBuild(G.build === 'fighter' ? null : 'fighter');
-    if (e.key === 'g' || e.key === 'G') setBuild(G.build === 'foundry' ? null : 'foundry');
     if (e.key === 'c' || e.key === 'C') setBuild(G.build === 'cannon' ? null : 'cannon');
     if (e.key === 'm' || e.key === 'M') setBuild(G.build === 'battery' ? null : 'battery');
     if (e.key === 'x' || e.key === 'X') setBuild(G.build === 'recovery' ? null : 'recovery');
@@ -3958,6 +4158,8 @@
     zoneMat.opacity = (G.started && !G.over && !G.inWave && !reduced)
       ? 0.2 + 0.8 * (0.5 + 0.5 * Math.sin(now * 0.003))
       : 0.9;
+    // the interior ripples crawl inward; reduced motion holds them still
+    if (!reduced) rippleMat.uniforms.uT.value = now * 0.001;
 
     if (!dragging) {
       if (Math.abs(velX) > 1e-5 || Math.abs(velY) > 1e-5) {
