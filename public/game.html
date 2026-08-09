@@ -1752,14 +1752,16 @@
   const BULLET_MAX = 256;
   const bullets = [];
 
-  const bulletMesh = new THREE.InstancedMesh(
-    new THREE.OctahedronGeometry(1, 0),
-    new THREE.MeshBasicMaterial({ color: 0xffd9a0 }),
-    BULLET_MAX
-  );
-  bulletMesh.count = 0;
-  bulletMesh.frustumCulled = false;
-  world.add(bulletMesh);
+  //  Two projectile models: the railgun slug fired by turrets/sea cannons
+  //  and the heavier battery missile. Both are instanced and swapped in by
+  //  buildModels once the GLBs land; until then nothing is in flight.
+  let shellMesh = null, missileMesh = null;
+  function resetBullets() {
+    bullets.length = 0;
+    if (shellMesh) shellMesh.count = 0;
+    if (missileMesh) missileMesh.count = 0;
+  }
+
 
   // Smoke is one Points object with a per-particle size and alpha, so a few
   // thousand puffs cost one draw call. PointsMaterial cannot fade per
