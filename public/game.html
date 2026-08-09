@@ -2706,6 +2706,14 @@
     coreMesh = instanced(parts.core, MAX_TURRETS, true);
     batteryMesh = instanced(parts.battery, MAX_TURRETS, false);
 
+    // both projectiles are authored nose-up (+Y); lay them onto -Z once so
+    // updateBullets can just point the instance down its velocity
+    parts.slug.geo.rotateX(-Math.PI / 2);
+    parts.missile.geo.rotateX(-Math.PI / 2);
+    shellMesh = instanced(parts.slug, BULLET_MAX, true);
+    missileMesh = instanced(parts.missile, BULLET_MAX, true);
+
+
     for (let i = 0; i < MAX_SHIPS; i++) {
       const m = new THREE.Mesh(parts.mother.geo, parts.mother.mat);  // geo/mat shared
       m.frustumCulled = false;
