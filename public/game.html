@@ -2902,8 +2902,8 @@
     clearFighters();
     clearFoundries();
     clearEnemies();
-    bullets.length = 0;
-    bulletMesh.count = 0;
+    resetBullets();
+
     sCount = 0;
     smokeGeo.setDrawRange(0, 0);
     G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0;
