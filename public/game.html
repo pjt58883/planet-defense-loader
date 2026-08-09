@@ -1967,15 +1967,23 @@
     }
     bullets.length = live;
 
+    // shells and missiles are separate instanced models, so each one is
+    // packed into its own run and pointed down its own velocity
+    let nS = 0, nM = 0;
     for (let i = 0; i < live; i++) {
-      dummy.position.copy(bullets[i].pos);
-      dummy.quaternion.set(0, 0, 0, 1);
-      dummy.scale.setScalar(scale * (bullets[i].splashDmg ? 0.22 : 0.13));
+      const b = bullets[i];
+      const mesh = b.splashDmg ? missileMesh : shellMesh;
+      if (!mesh) continue;
+      dummy.position.copy(b.pos);
+      bTgt.copy(b.pos).add(b.vel);
+      dummy.lookAt(bTgt);                       // model nose is baked onto -Z
+      dummy.scale.setScalar(scale * (b.splashDmg ? 0.22 : 0.13));
       dummy.updateMatrix();
-      bulletMesh.setMatrixAt(i, dummy.matrix);
+      mesh.setMatrixAt(b.splashDmg ? nM++ : nS++, dummy.matrix);
     }
-    bulletMesh.count = live;
-    bulletMesh.instanceMatrix.needsUpdate = true;
+    if (shellMesh) { shellMesh.count = nS; shellMesh.instanceMatrix.needsUpdate = true; }
+    if (missileMesh) { missileMesh.count = nM; missileMesh.instanceMatrix.needsUpdate = true; }
+
   }
 
   const alienPos = new THREE.Vector3(), aim = new THREE.Vector3(),
