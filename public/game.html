@@ -1752,14 +1752,16 @@
   const BULLET_MAX = 256;
   const bullets = [];
 
-  const bulletMesh = new THREE.InstancedMesh(
-    new THREE.OctahedronGeometry(1, 0),
-    new THREE.MeshBasicMaterial({ color: 0xffd9a0 }),
-    BULLET_MAX
-  );
-  bulletMesh.count = 0;
-  bulletMesh.frustumCulled = false;
-  world.add(bulletMesh);
+  //  Two projectile models: the railgun slug fired by turrets/sea cannons
+  //  and the heavier battery missile. Both are instanced and swapped in by
+  //  buildModels once the GLBs land; until then nothing is in flight.
+  let shellMesh = null, missileMesh = null;
+  function resetBullets() {
+    bullets.length = 0;
+    if (shellMesh) shellMesh.count = 0;
+    if (missileMesh) missileMesh.count = 0;
+  }
+
 
   // Smoke is one Points object with a per-particle size and alpha, so a few
   // thousand puffs cost one draw call. PointsMaterial cannot fade per
@@ -1965,15 +1967,23 @@
     }
     bullets.length = live;
 
+    // shells and missiles are separate instanced models, so each one is
+    // packed into its own run and pointed down its own velocity
+    let nS = 0, nM = 0;
     for (let i = 0; i < live; i++) {
-      dummy.position.copy(bullets[i].pos);
-      dummy.quaternion.set(0, 0, 0, 1);
-      dummy.scale.setScalar(scale * (bullets[i].splashDmg ? 0.22 : 0.13));
+      const b = bullets[i];
+      const mesh = b.splashDmg ? missileMesh : shellMesh;
+      if (!mesh) continue;
+      dummy.position.copy(b.pos);
+      bTgt.copy(b.pos).add(b.vel);
+      dummy.lookAt(bTgt);                       // model nose is baked onto -Z
+      dummy.scale.setScalar(scale * (b.splashDmg ? 0.22 : 0.13));
       dummy.updateMatrix();
-      bulletMesh.setMatrixAt(i, dummy.matrix);
+      mesh.setMatrixAt(b.splashDmg ? nM++ : nS++, dummy.matrix);
     }
-    bulletMesh.count = live;
-    bulletMesh.instanceMatrix.needsUpdate = true;
+    if (shellMesh) { shellMesh.count = nS; shellMesh.instanceMatrix.needsUpdate = true; }
+    if (missileMesh) { missileMesh.count = nM; missileMesh.instanceMatrix.needsUpdate = true; }
+
   }
 
   const alienPos = new THREE.Vector3(), aim = new THREE.Vector3(),
@@ -2373,7 +2383,7 @@
     G.inWave = false;
     G.queue.length = 0;
     clearEnemies();                              // nothing left hanging in the sky
-    bullets.length = 0; bulletMesh.count = 0;
+    resetBullets();
     hideMothers();
     say('PLANET LOST \u00B7 NEW WORLD TO RESTART', true);
   }
@@ -2599,7 +2609,12 @@
     // the dart flies the retired viper model; a dedicated dart.glb in
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
-    battery: ['/assets/battery.glb']
+    battery: ['/assets/battery.glb'],
+    // projectiles: the railgun slug (turrets, sea cannons) and the battery
+    // missile. Both are modelled standing on +Y and are laid onto -Z below.
+    slug:    ['/assets/railgun_ammo.glb'],
+    missile: ['/assets/missile_battery_ammo.glb']
+
   };
 
   //  Slots with no shipped GLB yet: they render as placeholders by design,
@@ -2654,6 +2669,15 @@
         geo = new THREE.CylinderGeometry(BATTERY_R * 0.55, BATTERY_R, BATTERY_H, 6);
         geo.translate(0, BATTERY_H / 2, 0);             // base at y=0
         color = 0x7d8a5a; break;
+      // projectiles: modelled standing on +Y like their GLBs, ~2 units long,
+      // so buildModels can lay either one onto -Z with the same rotation
+      case 'slug':
+        geo = new THREE.ConeGeometry(0.16, 1.9, 6);
+        color = 0xffd9a0; break;
+      case 'missile':
+        geo = new THREE.ConeGeometry(0.37, 1.9, 6);
+        color = 0xffb060; break;
+
       default:  // core
         geo = new THREE.CylinderGeometry(CORE_R * 0.7, CORE_R, CORE_SEAT, 8);
         geo.translate(0, CORE_SEAT / 2, 0);
@@ -2681,6 +2705,14 @@
     platMesh = instanced(parts.hover, MAX_TURRETS, true);
     coreMesh = instanced(parts.core, MAX_TURRETS, true);
     batteryMesh = instanced(parts.battery, MAX_TURRETS, false);
+
+    // both projectiles are authored nose-up (+Y); lay them onto -Z once so
+    // updateBullets can just point the instance down its velocity
+    parts.slug.geo.rotateX(-Math.PI / 2);
+    parts.missile.geo.rotateX(-Math.PI / 2);
+    shellMesh = instanced(parts.slug, BULLET_MAX, true);
+    missileMesh = instanced(parts.missile, BULLET_MAX, true);
+
 
     for (let i = 0; i < MAX_SHIPS; i++) {
       const m = new THREE.Mesh(parts.mother.geo, parts.mother.mat);  // geo/mat shared
@@ -2892,8 +2924,8 @@
     clearFighters();
     clearFoundries();
     clearEnemies();
-    bullets.length = 0;
-    bulletMesh.count = 0;
+    resetBullets();
+
     sCount = 0;
     smokeGeo.setDrawRange(0, 0);
     G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0;
