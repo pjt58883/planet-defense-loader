@@ -1563,7 +1563,10 @@
   //  out of hundreds, so you could pave the far side of the planet and never
   //  pay for it. Now the drifting front eventually walks through your
   //  industry, and where you put the money is a real bet.
+  //  A landing flattens EVERYTHING on the tile: a hex can host a tower and
+  //  base a fighter at once, and both die with the ground under them.
   function demolish(ci) {
+    const lost = [];
     if (foundryAt.has(ci)) {
       const i = foundries.indexOf(foundryAt.get(ci));
       foundries.splice(i, 1);
@@ -1573,26 +1576,24 @@
         foundryMesh.count = foundries.length;
         foundryMesh.instanceMatrix.needsUpdate = true;
       }
-      return 'FOUNDRY LOST';
+      lost.push('FOUNDRY');
     }
     if (towerAt.has(ci)) {
-      const i = towers.indexOf(towerAt.get(ci));
       const kind = towerAt.get(ci).kind;
-      towers.splice(i, 1);
+      towers.splice(towers.indexOf(towerAt.get(ci)), 1);
       towerAt.delete(ci);
       rebuildEmplacements();
-      return kind === 'cannon' ? 'SEA CANNON LOST'
-           : kind === 'battery' ? 'BATTERY LOST' : 'TURRET LOST';
+      lost.push(kind === 'cannon' ? 'SEA CANNON' : kind === 'battery' ? 'BATTERY' : 'TURRET');
     }
     if (fighterAt.has(ci)) {
-      const i = fighters.indexOf(fighterAt.get(ci));
-      fighters.splice(i, 1);
+      fighters.splice(fighters.indexOf(fighterAt.get(ci)), 1);
       fighterAt.delete(ci);
       if (jetMesh) jetMesh.count = fighters.length;
-      return 'FIGHTER LOST';
+      if (jetOutlineMesh) jetOutlineMesh.count = fighters.length;
+      lost.push('FIGHTER');
     }
-    if (removeRecovery(ci)) return 'RECOVERY TEAM LOST';
-    return null;
+    if (removeRecovery(ci)) lost.push('RECOVERY TEAM');
+    return lost.length ? lost.join(' + ') + ' LOST' : null;
   }
 
   // =====================================================================
@@ -1988,6 +1989,34 @@
   const OUTLINE_SCALE = 1.06;
   const outlineMat = new THREE.MeshBasicMaterial({ color: 0xe01f14, side: THREE.BackSide });      // hostile: the integrity bar's red
   const allyOutlineMat = new THREE.MeshBasicMaterial({ color: 0x14e01f, side: THREE.BackSide });  // friendly: the same, in green
+
+  //  Friendly outlines for the buildings. Each building mesh gets a green
+  //  back-face twin whose instance matrices are mirrored from the original
+  //  with a local scale-up, so whatever moves (gun barrels, launchers)
+  //  drags its outline along for free.
+  let padOutline = null, gunOutline = null, platOutline = null, coreOutline = null,
+      batteryOutline = null, foundryOutline = null, recoveryOutline = null;
+  const OUTLINE_M = new THREE.Matrix4().makeScale(OUTLINE_SCALE, OUTLINE_SCALE, OUTLINE_SCALE);
+  const oTmp = new THREE.Matrix4();
+
+  function makeAllyOutline(geo, max) {
+    const m = new THREE.InstancedMesh(geo, allyOutlineMat, max);
+    m.count = 0;
+    m.frustumCulled = false;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    world.add(m);
+    return m;
+  }
+
+  function mirrorOutline(src, dst) {
+    if (!src || !dst) return;
+    for (let i = 0; i < src.count; i++) {
+      oTmp.fromArray(src.instanceMatrix.array, i * 16).multiply(OUTLINE_M);
+      dst.setMatrixAt(i, oTmp);
+    }
+    dst.count = src.count;
+    dst.instanceMatrix.needsUpdate = true;
+  }
   const outlineMeshes = {};
   for (const t in enemyMeshes) {
     const m = new THREE.InstancedMesh(enemyMeshes[t].geometry, outlineMat, MAX_ALIENS);
@@ -2788,6 +2817,15 @@
     if (modelsOK && towers.length) gunMesh.instanceMatrix.needsUpdate = true;
     if (batteryMesh && batteryMesh.count) batteryMesh.instanceMatrix.needsUpdate = true;
 
+    // friendly outlines shadow every building mesh, swivelling parts included
+    mirrorOutline(padMesh, padOutline);
+    mirrorOutline(gunMesh, gunOutline);
+    mirrorOutline(platMesh, platOutline);
+    mirrorOutline(coreMesh, coreOutline);
+    mirrorOutline(batteryMesh, batteryOutline);
+    mirrorOutline(foundryMesh, foundryOutline);
+    mirrorOutline(recoveryMesh, recoveryOutline);
+
     // the dig crews' sidearms: short reach, low ceiling, but every shot
     // leaves a strobing flash at the muzzle so a defended dig reads busy
     for (const r of recoveries) {
@@ -3261,6 +3299,15 @@
     recoveryMesh = instanced(parts.recovery, MAX_TURRETS, false);
     rebuildRecoveryMesh();
 
+    // green twins for everything the player builds
+    padOutline = makeAllyOutline(parts.pad.geo, MAX_TURRETS);
+    gunOutline = makeAllyOutline(parts.gun.geo, MAX_TURRETS);
+    platOutline = makeAllyOutline(parts.hover.geo, MAX_TURRETS);
+    coreOutline = makeAllyOutline(parts.core.geo, MAX_TURRETS);
+    batteryOutline = makeAllyOutline(parts.battery.geo, MAX_TURRETS);
+    foundryOutline = makeAllyOutline(parts.foundry.geo, MAX_TURRETS);
+    recoveryOutline = makeAllyOutline(parts.recovery.geo, MAX_TURRETS);
+
     // both projectiles are authored nose-up (+Y); lay them onto -Z once so
     // updateBullets can just point the instance down its velocity
     parts.slug.geo.rotateX(-Math.PI / 2);
@@ -3413,7 +3460,13 @@
     const wet = cellType[ci] === 'lake';
     if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
     if (!wet && G.build === 'cannon') { say('SEA CANNON NEEDS WATER'); return; }
-    if (towerAt.has(ci) || fighterAt.has(ci) || foundryAt.has(ci)) { say('TILE OCCUPIED'); return; }
+    // a fighter is BASED on a hex, not built on it: it neither blocks a
+    // tower nor is blocked by one. Only a second fighter is refused.
+    if (G.build === 'fighter') {
+      if (fighterAt.has(ci)) { say('FIGHTER ALREADY BASED HERE'); return; }
+    } else if (towerAt.has(ci) || foundryAt.has(ci)) {
+      say('TILE OCCUPIED'); return;
+    }
 
     if (G.build === 'cannon') {
       if (G.gold < BAL.cannonCost) { say('NOT ENOUGH GOLD'); return; }
@@ -3466,7 +3519,8 @@
   };
 
   function buildingAt(ci) {
-    return towerAt.get(ci) || fighterAt.get(ci) || foundryAt.get(ci) || recoveryAt.get(ci) || null;
+    // the fighter comes last: on a shared hex the card shows the hardware
+    return towerAt.get(ci) || foundryAt.get(ci) || recoveryAt.get(ci) || fighterAt.get(ci) || null;
   }
 
   function upgradeBase(ci) {
