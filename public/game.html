@@ -1111,7 +1111,13 @@
 
     function texture(texIdx, onFail) {
       try {
-        const img = json.images[json.textures[texIdx].source];
+        const texDef = json.textures[texIdx];
+        // WebP-encoded textures park their image index inside the
+        // EXT_texture_webp extension instead of texture.source
+        const src = texDef.source !== undefined ? texDef.source
+                  : texDef.extensions && texDef.extensions.EXT_texture_webp
+                    ? texDef.extensions.EXT_texture_webp.source : undefined;
+        const img = json.images[src];
         const bv = json.bufferViews[img.bufferView];
         const o = bv.byteOffset || 0;
         const uri = 'data:' + img.mimeType + ';base64,' +
@@ -1142,10 +1148,16 @@
       });
     }
     if (m.emissiveTexture) {
-      mat.emissiveMap = texture(m.emissiveTexture.index, () => {
-        mat.emissiveMap = null; mat.needsUpdate = true;
+      // a bright emissive with no map would glow the whole mesh white, so
+      // the colour is only set once the map actually exists, and a failed
+      // load resets it
+      const em = texture(m.emissiveTexture.index, () => {
+        mat.emissiveMap = null; mat.emissive.setHex(0x000000); mat.needsUpdate = true;
       });
-      mat.emissive = new THREE.Color(0.9, 0.9, 0.9);
+      if (em) {
+        mat.emissiveMap = em;
+        mat.emissive = new THREE.Color(0.9, 0.9, 0.9);
+      }
     }
     return { geo, mat };
   }
@@ -1627,8 +1639,13 @@
   //  climb, and against a single fast target most of the burst is wasted.
   //  Batteries thin a wave out; turrets still finish it.
   // =====================================================================
-  const BATTERY_R = 1.1;       // placeholder footprint radius, model units
-  const BATTERY_H = 0.9;       // muzzle height, model units
+  //  The model's measured footprint radius is 0.527, but scaling by that
+  //  would span the tile edge to edge and stand 3.6 tile-fits tall - twice
+  //  a turret. Padding the divisor keeps the tower at ~70% of the tile and
+  //  about 2.5 fits tall, so it reads as the biggest gun without dwarfing
+  //  everything around it.
+  const BATTERY_R = 0.75;      // footprint divisor, model units
+  const BATTERY_H = 1.899;     // muzzle height = model top, model units
 
   let batteryMesh = null;
 
@@ -1698,7 +1715,7 @@
   //  the viper's length so the size maths is identical either way; when a
   //  real hulk or dart GLB lands in public/assets, measure it and update
   //  its entry here.
-  const ENEMY_LEN = { viper: 1.898, hulk: 1.884, dart: 1.884 };
+  const ENEMY_LEN = { viper: 1.898, hulk: 1.884, dart: 1.884 };   // dart = viper model's length
   const VIPER_LEN = 1.884;           // placeholder cones are built to this
 
   // one instanced mesh per enemy type, all drawn from the same alien list
@@ -2579,7 +2596,9 @@
     hover:   ['/assets/hover.glb',   '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb'],
     core:    ['/assets/core.glb',    '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb'],
     hulk:    ['/assets/hulk.glb'],
-    dart:    ['/assets/dart.glb'],
+    // the dart flies the retired viper model; a dedicated dart.glb in
+    // public/assets would take over automatically
+    dart:    ['/assets/dart.glb', '/assets/viper.glb'],
     battery: ['/assets/battery.glb']
   };
 
@@ -2587,7 +2606,7 @@
   //  so a missing file is expected and not worth an on-screen warning.
   //  Drop a model into public/assets under that name to fill the slot
   //  (and measure its length into ENEMY_LEN / footprint constants).
-  const OPTIONAL_MODELS = new Set(['hulk', 'dart', 'battery']);
+  const OPTIONAL_MODELS = new Set(['hulk']);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
