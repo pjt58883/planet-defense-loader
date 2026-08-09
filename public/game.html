@@ -1026,7 +1026,6 @@
     batteryRange: 3,                        // rings; no mountain bonus
     batteryCeiling: 1.30,                   // engages higher than any turret
     batteryRate: 2.2, batteryDmg: 30,       // one slow, heavy shell
-    batteryTurn: 2.0,                       // radians/s the mount slews
     splashRadius: 2.2,                      // burst radius, tile inradii
     splashDmg: 14,                          // dealt to everything else in it
     upgradeMax: 3,                          // levels a building can reach
@@ -1703,20 +1702,17 @@
   // =====================================================================
   //  MISSILE BATTERY
   //
-  //  The anti-crowd emplacement. One slow, heavy shell that bursts on
-  //  impact and damages everything near the hit, where a turret only ever
-  //  kills what it aimed at. It engages higher than anything else, so it
-  //  starts working the moment a drop begins - but the shell takes time to
-  //  climb, and against a single fast target most of the burst is wasted.
-  //  Batteries thin a wave out; turrets still finish it.
+  //  The anti-crowd emplacement. One slow, heavy missile that homes,
+  //  bursts on impact and damages everything near the hit, where a turret
+  //  only ever kills what it aimed at. It engages higher than anything
+  //  else. The launcher rides the same pad as the railgun turret and
+  //  swivels on the pad's socket exactly like the gun does, so it angles
+  //  toward whatever it is committed to and stands upright at rest.
   // =====================================================================
-  //  The model's measured footprint radius is 0.527, but scaling by that
-  //  would span the tile edge to edge and stand 3.6 tile-fits tall - twice
-  //  a turret. Padding the divisor keeps the tower at ~70% of the tile and
-  //  about 2.5 fits tall, so it reads as the biggest gun without dwarfing
-  //  everything around it.
-  const BATTERY_R = 0.75;      // footprint divisor, model units
-  const BATTERY_H = 1.899;     // muzzle height = model top, model units
+  //  The launcher model's measured footprint radius is 0.527; the divisor
+  //  keeps it at ~62% of the tile so it sits inside the pad it rides.
+  const BATTERY_R = 0.85;      // footprint divisor, model units
+  const BATTERY_H = 1.899;     // muzzle = model top, in model units above the seat
 
   let batteryMesh = null;
 
@@ -1724,42 +1720,37 @@
     if (towers.length >= MAX_TURRETS) return null;
     const f = tileFit(ci);
     const up = f.up;
-    const k = f.fit / BATTERY_R;
+    const kp = f.fit / PAD_R;                 // the railgun's own pad
+    const k = f.fit / BATTERY_R;              // the launcher riding its socket
 
-    const alignQ = new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up);
     const tur = {
       ci, kind: 'battery', k, level: 1,
       up: up.clone(),
-      seat: up.clone().multiplyScalar(RADIUS + BATTERY_H * 0.5 * k),
+      seat: up.clone().multiplyScalar(RADIUS + GUN_SEAT * kp),
       aimQ: new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up),
       aimDir: up.clone(),
-      pos: up.clone().multiplyScalar(RADIUS + BATTERY_H * k),
+      pos: up.clone().multiplyScalar(RADIUS + GUN_SEAT * kp + BATTERY_H * k),
       cover: ringSet(ci, BAL.batteryRange),
       ceiling: BAL.batteryCeiling,
       rate: BAL.batteryRate, dmg: BAL.batteryDmg,
-      splashDmg: BAL.splashDmg, cool: 0,
-      // the mount slews about its own up axis to face the target; b1/b2
-      // are the tangent directions the model's X and Z axes start on
-      base: up.clone().multiplyScalar(RADIUS - f.fit * 0.04),
-      alignQ,
-      b1: new THREE.Vector3(1, 0, 0).applyQuaternion(alignQ),
-      b2: new THREE.Vector3(0, 0, 1).applyQuaternion(alignQ),
-      yaw: 0
+      splashDmg: BAL.splashDmg, cool: 0
     };
+    if (modelsOK) {
+      mPos.copy(up).multiplyScalar(RADIUS - f.fit * 0.04);
+      mQuat.setFromUnitVectors(LOCAL_UP, up);
+      mScale.setScalar(kp);
+      tur.padMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
+    }
     towers.push(tur);
     towerAt.set(ci, tur);
     rebuildEmplacements();
     return tur;
   }
 
-  const bV = new THREE.Vector3(), bYawQ = new THREE.Quaternion(), bFullQ = new THREE.Quaternion();
-
   function writeBattery(t) {
     if (!batteryMesh || !(t.batSlot >= 0)) return;
-    bYawQ.setFromAxisAngle(LOCAL_UP, t.yaw);
-    bFullQ.copy(t.alignQ).multiply(bYawQ);
     mScale.setScalar(t.k);
-    batteryMesh.setMatrixAt(t.batSlot, mMat.compose(t.base, bFullQ, mScale));
+    batteryMesh.setMatrixAt(t.batSlot, mMat.compose(t.seat, t.aimQ, mScale));
   }
 
   //  Turrets, cannons and batteries live in one list so targeting, firing
@@ -1775,6 +1766,8 @@
         if (platMesh) { platMesh.setMatrixAt(plats, t.platMat); coreMesh.setMatrixAt(plats, t.coreMat); }
         plats++;
       } else if (t.kind === 'battery') {
+        if (modelsOK) padMesh.setMatrixAt(pads, t.padMat);   // it rides a railgun pad
+        pads++;
         t.batSlot = bats++;
         writeBattery(t);
       } else {
@@ -2777,27 +2770,14 @@
       }
       if (!best || t.cool > 0) continue;
       t.cool = t.rate;
-      if (t.kind === 'battery') muzzle.copy(t.pos);   // no barrel to clear
-      else muzzle.copy(t.aimDir).multiplyScalar(GUN_TIP * t.k).add(t.seat);
+      // both kinds fire from the tip of whatever is doing the aiming
+      muzzle.copy(t.aimDir)
+        .multiplyScalar((t.kind === 'battery' ? BATTERY_H : GUN_TIP) * t.k)
+        .add(t.seat);
       fireShell(muzzle, t.aimDir, best, t.dmg, t.splashDmg);
     }
-    for (const t of towers) writeGun(t);
+    for (const t of towers) { writeGun(t); writeBattery(t); }
     if (modelsOK && towers.length) gunMesh.instanceMatrix.needsUpdate = true;
-
-    // batteries have no swivelling barrel, so the whole mount slews toward
-    // the target's bearing instead, capped by a turn rate like the jets
-    for (const t of towers) {
-      if (t.kind !== 'battery') continue;
-      bV.copy(t.aimDir).addScaledVector(t.up, -t.aimDir.dot(t.up));
-      if (bV.lengthSq() > 1e-8) {
-        const goal = Math.atan2(-bV.dot(t.b1), -bV.dot(t.b2));
-        let d = goal - t.yaw;
-        d = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-        const lim = BAL.batteryTurn * dt;
-        t.yaw += THREE.MathUtils.clamp(d, -lim, lim);
-      }
-      writeBattery(t);
-    }
     if (batteryMesh && batteryMesh.count) batteryMesh.instanceMatrix.needsUpdate = true;
 
     // the dig crews' sidearms: short reach, low ceiling, but every shot
