@@ -2921,6 +2921,11 @@
     platMesh = instanced(parts.hover, MAX_TURRETS, true);
     coreMesh = instanced(parts.core, MAX_TURRETS, true);
     batteryMesh = instanced(parts.battery, MAX_TURRETS, false);
+    // the outpost is modelled centred on its own origin; drop it so the
+    // ground plate sits on the tile instead of half-buried
+    parts.recovery.geo.computeBoundingBox();
+    const rbb = parts.recovery.geo.boundingBox;
+    if (rbb) parts.recovery.geo.translate(0, -rbb.min.y, 0);
     recoveryMesh = instanced(parts.recovery, MAX_TURRETS, false);
     rebuildRecoveryMesh();
 
