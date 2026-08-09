@@ -1111,7 +1111,13 @@
 
     function texture(texIdx, onFail) {
       try {
-        const img = json.images[json.textures[texIdx].source];
+        const texDef = json.textures[texIdx];
+        // WebP-encoded textures park their image index inside the
+        // EXT_texture_webp extension instead of texture.source
+        const src = texDef.source !== undefined ? texDef.source
+                  : texDef.extensions && texDef.extensions.EXT_texture_webp
+                    ? texDef.extensions.EXT_texture_webp.source : undefined;
+        const img = json.images[src];
         const bv = json.bufferViews[img.bufferView];
         const o = bv.byteOffset || 0;
         const uri = 'data:' + img.mimeType + ';base64,' +
@@ -1142,10 +1148,16 @@
       });
     }
     if (m.emissiveTexture) {
-      mat.emissiveMap = texture(m.emissiveTexture.index, () => {
-        mat.emissiveMap = null; mat.needsUpdate = true;
+      // a bright emissive with no map would glow the whole mesh white, so
+      // the colour is only set once the map actually exists, and a failed
+      // load resets it
+      const em = texture(m.emissiveTexture.index, () => {
+        mat.emissiveMap = null; mat.emissive.setHex(0x000000); mat.needsUpdate = true;
       });
-      mat.emissive = new THREE.Color(0.9, 0.9, 0.9);
+      if (em) {
+        mat.emissiveMap = em;
+        mat.emissive = new THREE.Color(0.9, 0.9, 0.9);
+      }
     }
     return { geo, mat };
   }
@@ -1627,8 +1639,13 @@
   //  climb, and against a single fast target most of the burst is wasted.
   //  Batteries thin a wave out; turrets still finish it.
   // =====================================================================
-  const BATTERY_R = 1.1;       // placeholder footprint radius, model units
-  const BATTERY_H = 0.9;       // muzzle height, model units
+  //  The model's measured footprint radius is 0.527, but scaling by that
+  //  would span the tile edge to edge and stand 3.6 tile-fits tall - twice
+  //  a turret. Padding the divisor keeps the tower at ~70% of the tile and
+  //  about 2.5 fits tall, so it reads as the biggest gun without dwarfing
+  //  everything around it.
+  const BATTERY_R = 0.75;      // footprint divisor, model units
+  const BATTERY_H = 1.899;     // muzzle height = model top, model units
 
   let batteryMesh = null;
 
@@ -2589,7 +2606,7 @@
   //  so a missing file is expected and not worth an on-screen warning.
   //  Drop a model into public/assets under that name to fill the slot
   //  (and measure its length into ENEMY_LEN / footprint constants).
-  const OPTIONAL_MODELS = new Set(['hulk', 'battery']);
+  const OPTIONAL_MODELS = new Set(['hulk']);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
