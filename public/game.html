@@ -1306,7 +1306,7 @@
   const fighterAt = new Map();
   const JET_LEN = 1.898;
 
-  let jetMesh = null;
+  let jetMesh = null, jetOutlineMesh = null;
 
   const fA1 = new THREE.Vector3(), fA2 = new THREE.Vector3(), fWant = new THREE.Vector3(),
         fAxis = new THREE.Vector3(), fQ = new THREE.Quaternion(), fPos = new THREE.Vector3(),
@@ -1356,6 +1356,7 @@
     fighters.length = 0;
     fighterAt.clear();
     if (jetMesh) jetMesh.count = 0;
+    if (jetOutlineMesh) jetOutlineMesh.count = 0;
   }
 
   function updateFighters(dt) {
@@ -1479,6 +1480,8 @@
         fQ.premultiply(fRoll);
         mScale.setScalar(f.k);
         jetMesh.setMatrixAt(i, mMat.compose(fPos, fQ, mScale));
+        mScale.setScalar(f.k * OUTLINE_SCALE);
+        jetOutlineMesh.setMatrixAt(i, mMat.compose(fPos, fQ, mScale));
 
         f.emit += dt;
         while (f.emit >= BAL.flameGap) {
@@ -1488,6 +1491,10 @@
       }
     }
     if (jetMesh && fighters.length) jetMesh.instanceMatrix.needsUpdate = true;
+    if (jetOutlineMesh) {
+      jetOutlineMesh.count = fighters.length;
+      if (fighters.length) jetOutlineMesh.instanceMatrix.needsUpdate = true;
+    }
   }
 
   // =====================================================================
@@ -1979,7 +1986,8 @@
   //  few percent larger in the same slot, so every hostile carries a light
   //  red silhouette that separates it from terrain and sky alike.
   const OUTLINE_SCALE = 1.06;
-  const outlineMat = new THREE.MeshBasicMaterial({ color: 0xe01f14, side: THREE.BackSide });   // the integrity bar's red
+  const outlineMat = new THREE.MeshBasicMaterial({ color: 0xe01f14, side: THREE.BackSide });      // hostile: the integrity bar's red
+  const allyOutlineMat = new THREE.MeshBasicMaterial({ color: 0x14e01f, side: THREE.BackSide });  // friendly: the same, in green
   const outlineMeshes = {};
   for (const t in enemyMeshes) {
     const m = new THREE.InstancedMesh(enemyMeshes[t].geometry, outlineMat, MAX_ALIENS);
@@ -3235,6 +3243,12 @@
     modelsOK = true;
 
     jetMesh = instanced(parts.jet, MAX_TURRETS, true);
+    // the friendly outline: same geometry, green back-face twin
+    jetOutlineMesh = new THREE.InstancedMesh(parts.jet.geo, allyOutlineMat, MAX_TURRETS);
+    jetOutlineMesh.count = 0;
+    jetOutlineMesh.frustumCulled = false;
+    jetOutlineMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    world.add(jetOutlineMesh);
     foundryMesh = instanced(parts.foundry, MAX_TURRETS, false);
     platMesh = instanced(parts.hover, MAX_TURRETS, true);
     coreMesh = instanced(parts.core, MAX_TURRETS, true);
@@ -3259,6 +3273,11 @@
       const m = new THREE.Mesh(parts.mother.geo, parts.mother.mat);  // geo/mat shared
       m.frustumCulled = false;
       m.visible = false;
+      // the hostile outline rides along as a slightly larger back-face child
+      const o = new THREE.Mesh(parts.mother.geo, outlineMat);
+      o.scale.setScalar(OUTLINE_SCALE);
+      o.frustumCulled = false;
+      m.add(o);
       world.add(m);
       motherMeshes.push(m);
     }
