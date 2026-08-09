@@ -48,8 +48,8 @@
   .hud.tc{top:20px;left:50%;transform:translateX(-50%);text-align:center}
 
   /* Wave summary. It sits above the HUD but only the card itself takes
-     clicks, so the planet stays draggable behind it and the break timer
-     keeps running underneath: reading the report is not free time. */
+     clicks, so the planet stays draggable behind it. The game pauses while
+     the card is open; autoplay just dismisses it after a few seconds. */
   .modal{
     position:fixed;z-index:100;
     top:50%;left:50%;transform:translate(-50%,-50%) scale(.96);
@@ -448,9 +448,8 @@
 
     // ---- per-cell metrics only. The geometry is built separately, because
     //      every tile IS a terrain tile and its shape depends on its type.
-    const inradius = [], circum = [];
+    const inradius = [];
     const tmp = new THREE.Vector3();
-    let spacing = 0;
 
     cells.forEach(cell => {
       const ctr = tmp.copy(cell.center).multiplyScalar(radius).clone();
@@ -460,17 +459,14 @@
       });
       const e = corners[0].clone().sub(ctr).cross(corners[1].clone().sub(ctr));
       if (e.dot(ctr) < 0) cell.ring.reverse();      // wind every cell outward once, here
-      spacing += corners[0].distanceTo(ctr) * 2 / cells.length;
 
-      let inr = Infinity, cir = 0;
+      let inr = Infinity;
       for (let i = 0; i < corners.length; i++) {
         const a = corners[i], b = corners[(i + 1) % corners.length];
         const m = Math.hypot((a.x + b.x) / 2 - ctr.x, (a.y + b.y) / 2 - ctr.y, (a.z + b.z) / 2 - ctr.z);
         if (m < inr) inr = m;
-        cir = Math.max(cir, a.distanceTo(ctr));
       }
       inradius.push(inr);
-      circum.push(cir);
     });
 
     // Which tiles touch which. Every corner of the dual is shared by exactly
@@ -490,9 +486,8 @@
 
     const meanInr = inradius.reduce((a, b) => a + b, 0) / inradius.length;
 
-    return { cells, inradius, circum, spacing, atCorner, meanInr,
-             neighbours: neighbours.map(s => [...s]),
-             pentagons: cells.filter(x => x.ring.length === 5).length };
+    return { cells, inradius, atCorner, meanInr,
+             neighbours: neighbours.map(s => [...s]) };
   }
 
   // ---------- tile state ----------
@@ -620,17 +615,6 @@
     vertexColors: true, metalness: 0.15, roughness: 0.7, flatShading: true
   });
 
-  // deterministic per tile, so a tile you clear and repaint looks the same
-  function rng(seed) {
-    let a = (seed * 1831565813) | 0;
-    return function () {
-      a = (a + 0x6D2B79F5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
   // Height is a pure function of the landness field, and the field lives on
   // corners that neighbouring tiles share. So two tiles meeting at a corner
   // always place that corner at the same radius, and the ground stays
@@ -643,24 +627,13 @@
   function terrainArrays(ci, kind) {
     const cell = tiles.cells[ci];
     const inr = tiles.inradius[ci];
-    const rand = rng(ci * 977 + kind.length * 31);
 
     const n = cell.center.clone().normalize();
     const ctr = n.clone().multiplyScalar(RADIUS);
 
-    const e1 = new THREE.Vector3(0, 0, 1);
-    if (Math.abs(n.z) > 0.9) e1.set(1, 0, 0);
-    e1.addScaledVector(n, -e1.dot(n)).normalize();
-    const e2 = new THREE.Vector3().crossVectors(n, e1);
-
     const pos = [], col = [];
-    const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3();
 
     function lift(p, h) { return p.clone().setLength(RADIUS + h); }
-    function at(u, v, h) {
-      return new THREE.Vector3().copy(ctr)
-        .addScaledVector(e1, u).addScaledVector(e2, v).setLength(RADIUS + h);
-    }
     function tri(a, b, c, ca, cb, cc) {
       pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
       col.push(ca[0], ca[1], ca[2], cb[0], cb[1], cb[2], cc[0], cc[1], cc[2]);
@@ -702,27 +675,6 @@
         tri(from[i], from[j], c, colEdge, colEdge, colCentre || colEdge);
       }
     }
-    function cone(u, v, r, h, baseH, side, tip) {
-      const SEG = 7, base = [];
-      for (let i = 0; i < SEG; i++) {
-        const a = (i / SEG) * Math.PI * 2;
-        base.push(at(u + Math.cos(a) * r, v + Math.sin(a) * r, baseH));
-      }
-      const apex = at(u, v, baseH + h);
-      for (let i = 0; i < SEG; i++) tri(base[i], base[(i + 1) % SEG], apex, side, side, tip || side);
-    }
-    function scatter(pull) {
-      const k = Math.floor(rand() * flat.length);
-      const a = flat[k], b = flat[(k + 1) % flat.length];
-      let s = rand(), t = rand();
-      if (s + t > 1) { s = 1 - s; t = 1 - t; }
-      const inset = pull * (1 - TILE_BORDER);
-      tmpA.copy(ctr).addScaledVector(tmpB.copy(a).sub(ctr), s * inset)
-                    .addScaledVector(tmpC.copy(b).sub(ctr), t * inset);
-      tmpA.sub(ctr);
-      return [tmpA.dot(e1), tmpA.dot(e2)];
-    }
-
     // ---- clip a polygon at the waterline. Points carry their own value, and a
     //      crossing is interpolated from the two values, so any two polygons
     //      sharing an edge produce the identical crossing point.
@@ -1022,7 +974,7 @@
   // =====================================================================
   //  Turret models
   //
-  //  Two GLBs, embedded so the file still opens from disk with no server.
+  //  Two GLBs, fetched alongside the other models at startup.
   //  Both are stripped down hard from the source exports: 43 MB and 776k
   //  triangles between them originally, which is not a thing you can ship
   //  to a browser. Geometry is decimated to about 2%, normal and roughness
@@ -1034,7 +986,7 @@
   const PAD_H = 1.109;
   const GUN_SEAT = 0.66;      // where the ball centre rides above the pad
   const GUN_TIP = 1.459;      // mast tip, measured from the ball centre
-  const MAX_TURRETS = 512;   // instance capacity; a blanketed planet exceeds 256
+  const MAX_TURRETS = 1024;  // instance capacity; covers every tile of the largest (812) world
 
   function parseGLB(buffer) {
     const u8 = new Uint8Array(buffer);
@@ -1049,19 +1001,49 @@
       off = at + len;
     }
 
-    const prim = json.meshes[0].primitives[0];
-    function slice(accIdx, Type, comps) {
+    // Read what the accessor declares rather than assuming float32/uint16:
+    // a model with uint32 indices or quantised attributes would otherwise be
+    // reinterpreted with the wrong type and come out as silent garbage.
+    const COMP_ARRAYS = {
+      5120: Int8Array, 5121: Uint8Array, 5122: Int16Array,
+      5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array
+    };
+    const COMP_COUNT = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
+
+    function accessorAttr(accIdx) {
       const a = json.accessors[accIdx];
       const bv = json.bufferViews[a.bufferView];
-      const o = buf.byteOffset + (bv.byteOffset || 0) + (a.byteOffset || 0);
-      return new Type(buf.buffer, o, a.count * comps);
+      const Type = COMP_ARRAYS[a.componentType];
+      const comps = COMP_COUNT[a.type];
+      if (!Type || !comps) {
+        throw new Error('unsupported accessor: componentType ' + a.componentType + ', type ' + a.type);
+      }
+      const base = buf.byteOffset + (bv.byteOffset || 0) + (a.byteOffset || 0);
+      const tight = comps * Type.BYTES_PER_ELEMENT;
+      let arr;
+      if (!bv.byteStride || bv.byteStride === tight) {
+        arr = new Type(buf.buffer, base, a.count * comps);
+      } else {
+        // interleaved view: copy each element out into a tight array
+        arr = new Type(a.count * comps);
+        for (let i = 0; i < a.count; i++) {
+          arr.set(new Type(buf.buffer, base + i * bv.byteStride, comps), i * comps);
+        }
+      }
+      return new THREE.BufferAttribute(arr, comps, !!a.normalized);
     }
 
+    if (json.meshes.length > 1 || json.meshes[0].primitives.length > 1) {
+      console.warn('GLB carries multiple meshes/primitives; only the first is rendered');
+    }
+    const prim = json.meshes[0].primitives[0];
+
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(slice(prim.attributes.POSITION, Float32Array, 3), 3));
-    geo.setAttribute('normal',   new THREE.BufferAttribute(slice(prim.attributes.NORMAL, Float32Array, 3), 3));
-    geo.setAttribute('uv',       new THREE.BufferAttribute(slice(prim.attributes.TEXCOORD_0, Float32Array, 2), 2));
-    geo.setIndex(new THREE.BufferAttribute(slice(prim.indices, Uint16Array, 1), 1));
+    geo.setAttribute('position', accessorAttr(prim.attributes.POSITION));
+    if (prim.attributes.TEXCOORD_0 !== undefined) geo.setAttribute('uv', accessorAttr(prim.attributes.TEXCOORD_0));
+    if (prim.indices !== undefined) geo.setIndex(accessorAttr(prim.indices));
+    if (prim.attributes.NORMAL !== undefined) geo.setAttribute('normal', accessorAttr(prim.attributes.NORMAL));
+    else geo.computeVertexNormals();
 
     // Data URI, not a blob URL. ImageLoader sets crossOrigin on a blob URL,
     // and from file:// the page origin is opaque, so that load fails CORS and
@@ -1091,7 +1073,9 @@
       } catch (e) { if (onFail) onFail(e); return null; }
     }
 
-    const m = json.materials[0], pbr = m.pbrMetallicRoughness || {};
+    // the primitive's own material, if it names one; a bare mesh gets defaults
+    const m = (json.materials && json.materials[prim.material !== undefined ? prim.material : 0]) || {};
+    const pbr = m.pbrMetallicRoughness || {};
     // Low metalness on purpose. There is no environment map in this scene, and
     // a metallic surface with nothing to reflect renders nearly black no matter
     // how many lights you point at it.
@@ -1720,10 +1704,17 @@
       sAlpha[i] = sA0[i] * (1 - t) * (1 - t);
     }
     smokeGeo.setDrawRange(0, sCount);
-    smokeGeo.attributes.position.needsUpdate = true;
-    smokeGeo.attributes.pcolor.needsUpdate = true;
-    smokeGeo.attributes.psize.needsUpdate = true;
-    smokeGeo.attributes.palpha.needsUpdate = true;
+    if (!sCount) return;               // nothing drawn, nothing to upload
+    // upload only the live prefix, not the whole SMOKE_MAX allocation
+    const attrs = smokeGeo.attributes;
+    attrs.position.updateRange.count = sCount * 3;
+    attrs.pcolor.updateRange.count = sCount * 3;
+    attrs.psize.updateRange.count = sCount;
+    attrs.palpha.updateRange.count = sCount;
+    attrs.position.needsUpdate = true;
+    attrs.pcolor.needsUpdate = true;
+    attrs.psize.needsUpdate = true;
+    attrs.palpha.needsUpdate = true;
   }
 
   const flameAt = new THREE.Vector3();
@@ -1787,7 +1778,9 @@
           continue;                                 // dropped this frame
         }
         bDir.divideScalar(dist);
-        b.vel.lerp(bDir.multiplyScalar(BAL.shellSpeed), 0.25);
+        // a quarter of the remaining error per 60Hz frame, whatever the
+        // actual frame rate, so homing strength does not vary by display
+        b.vel.lerp(bDir.multiplyScalar(BAL.shellSpeed), 1 - Math.pow(0.75, dt * 60));
       } else if (!b.spent) {
         b.target.incoming -= b.dmg;                 // target died first
         b.spent = true;
@@ -2329,17 +2322,65 @@
   //  nothing at startup. The trade is that this no longer runs from file://,
   //  because fetch refuses local paths: it needs the dev preview or any
   //  static host.
-  const MODEL_DIR = '';   // root-relative: survives nested routes
-  const MODEL_FILES = {
-    pad: '/__l5e/assets-v1/ed785583-b953-46d5-ab3f-e50d5d30ff44/pad.glb',
-    gun: '/__l5e/assets-v1/133193a7-4cfb-472e-b1b9-78777d72ff7a/gun.glb',
-    jet: '/__l5e/assets-v1/aa131bb3-9b03-4489-b483-5ab9fe50aa00/jet.glb',
-    foundry: '/__l5e/assets-v1/9da45853-b69f-416c-9044-3847846ee13c/foundry.glb',
-    mother: '/__l5e/assets-v1/a43bfc6e-27db-4579-b762-be7ff49cf039/mother.glb',
-    viper: '/__l5e/assets-v1/946d2261-e618-49a3-a170-f8d9d8d00e20/viper.glb',
-    hover: '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb',
-    core: '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb'
+  //
+  //  Each model is tried from the repo first (public/assets/), then from the
+  //  Lovable asset store this project was built in, so the game works on any
+  //  static host once the GLBs are committed. To self-host a model, drop it
+  //  in public/assets/ under the name listed here. A model that loads from
+  //  neither source renders as a plain placeholder shape instead of
+  //  disappearing.
+  const MODEL_URLS = {
+    pad:     ['/assets/pad.glb',     '/__l5e/assets-v1/ed785583-b953-46d5-ab3f-e50d5d30ff44/pad.glb'],
+    gun:     ['/assets/gun.glb',     '/__l5e/assets-v1/133193a7-4cfb-472e-b1b9-78777d72ff7a/gun.glb'],
+    jet:     ['/assets/jet.glb',     '/__l5e/assets-v1/aa131bb3-9b03-4489-b483-5ab9fe50aa00/jet.glb'],
+    foundry: ['/assets/foundry.glb', '/__l5e/assets-v1/9da45853-b69f-416c-9044-3847846ee13c/foundry.glb'],
+    mother:  ['/assets/mother.glb',  '/__l5e/assets-v1/a43bfc6e-27db-4579-b762-be7ff49cf039/mother.glb'],
+    viper:   ['/assets/viper.glb',   '/__l5e/assets-v1/946d2261-e618-49a3-a170-f8d9d8d00e20/viper.glb'],
+    hover:   ['/assets/hover.glb',   '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb'],
+    core:    ['/assets/core.glb',    '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb']
   };
+
+  //  Stand-ins for models that fail to load, built to the same footprints
+  //  and pivots the real GLBs were measured at, so every scale factor and
+  //  seat height in the placement code still applies unchanged.
+  function placeholderPart(name) {
+    let geo, color;
+    switch (name) {
+      case 'pad':
+        geo = new THREE.CylinderGeometry(PAD_R * 0.7, PAD_R, GUN_SEAT, 12);
+        geo.translate(0, GUN_SEAT / 2, 0);              // underside at y=0
+        color = 0x5c6a7d; break;
+      case 'gun':
+        geo = new THREE.ConeGeometry(0.3, GUN_TIP, 8);
+        geo.translate(0, GUN_TIP / 2, 0);               // pivot at the ball centre
+        color = 0x8fa3bd; break;
+      case 'jet':
+        geo = new THREE.ConeGeometry(JET_LEN * 0.22, JET_LEN, 6);
+        geo.rotateX(-Math.PI / 2);                      // nose down -Z
+        color = 0xd0d6df; break;
+      case 'foundry':
+        geo = new THREE.CylinderGeometry(FOUNDRY_R * 0.75, FOUNDRY_R, 1.0, 8);
+        geo.translate(0, 0.5, 0);
+        color = 0xb08a4f; break;
+      case 'mother':
+        geo = new THREE.CylinderGeometry(MOTHER_LEN * 0.18, MOTHER_LEN * 0.26, MOTHER_LEN, 8);
+        geo.rotateX(-Math.PI / 2);                      // long axis on Z, nose -Z
+        color = 0x6a5c8a; break;
+      case 'viper':
+        geo = new THREE.ConeGeometry(VIPER_LEN * 0.2, VIPER_LEN, 5);
+        geo.rotateX(-Math.PI / 2);                      // nose down -Z
+        color = 0xb45cff; break;
+      case 'hover':
+        geo = new THREE.CylinderGeometry(PLAT_R, PLAT_R, PLAT_DECK, 10);
+        geo.translate(0, PLAT_DECK / 2, 0);             // deck top at PLAT_DECK
+        color = 0x4a5a6a; break;
+      default:  // core
+        geo = new THREE.CylinderGeometry(CORE_R * 0.7, CORE_R, CORE_SEAT, 8);
+        geo.translate(0, CORE_SEAT / 2, 0);
+        color = 0x9aa7b8; break;
+    }
+    return { geo, mat: new THREE.MeshStandardMaterial({ color, metalness: 0.18, roughness: 0.55, flatShading: true }) };
+  }
 
   function instanced(parsed, max, dynamic) {
     const m = new THREE.InstancedMesh(parsed.geo, parsed.mat, max);
@@ -2381,29 +2422,36 @@
   async function loadModels() {
     startBtn.disabled = true;
     startBtn.textContent = 'Loading models\u2026';
-    const names = Object.keys(MODEL_FILES);
-    try {
-      const bufs = await Promise.all(names.map(async n => {
-        const res = await fetch(MODEL_DIR + MODEL_FILES[n]);
-        if (!res.ok) throw new Error(MODEL_FILES[n] + ': ' + res.status);
-        return res.arrayBuffer();
-      }));
-      const parts = {};
-      names.forEach((n, i) => { parts[n] = parseGLB(bufs[i]); });
-      buildModels(parts);
-      startBtn.disabled = false;
-      startBtn.textContent = 'Start';
-    } catch (e) {
-      console.error('model load failed', e);
-      startBtn.textContent = 'Models failed to load';
-      // the game is still playable, just invisible in places, so let them in
-      startBtn.disabled = false;
+    const names = Object.keys(MODEL_URLS);
+    const parts = {}, missing = [];
+    // each model loads (or falls back) on its own, so one bad file costs one
+    // placeholder rather than the whole set
+    await Promise.all(names.map(async n => {
+      for (const url of MODEL_URLS[n]) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          parts[n] = parseGLB(await res.arrayBuffer());
+          return;
+        } catch (e) {
+          console.warn(n + ' failed from ' + url, e);
+        }
+      }
+      missing.push(n);
+      parts[n] = placeholderPart(n);
+    }));
+    buildModels(parts);
+    if (missing.length) {
+      console.warn('models missing, using placeholders:', missing.join(', '));
+      say('MODELS MISSING: ' + missing.join(', ').toUpperCase(), true);
     }
+    startBtn.disabled = false;
+    startBtn.textContent = 'Start';
   }
 
   // ---------- start card ----------
   const startModal = document.getElementById('startModal');
-  const modelsReady = loadModels();
+  loadModels();
   const sizeBtns = [...startModal.querySelectorAll('.sizes button')];
   let chosenFreq = 1;
 
@@ -2516,6 +2564,8 @@
     G.paused = false;
     G.landed = 0;
     hideSummary();
+    alertEl.classList.add('quiet');    // a sticky PLANET LOST must not
+    alertUntil = 0;                    // outlive the game it belongs to
     G.ships.length = 0;
     hideMothers();
     G.bearing = null;
