@@ -1052,6 +1052,9 @@
     batteryRange: 3,                        // rings; no mountain bonus
     batteryCeiling: 1.30,                   // engages higher than any turret
     batteryRate: 2.2, batteryDmg: 30,       // one slow, heavy shell
+    gunTurn:    4.2,                        // radians/s a railgun mount slews
+    batteryTurn: 1.8,                       // the launcher swings heavier
+    aimSettle:  0.05,                       // radians off-solution a mount may fire at
     splashRadius: 2.2,                      // burst radius, tile inradii
     splashDmg: 14,                          // dealt to everything else in it
     upgradeMax: 3,                          // levels a building can reach
@@ -1288,7 +1291,8 @@
       aimDir: up.clone(),
       cover: ringSet(ci, BAL.range + (onRock ? BAL.rockRange : 0)),
       ceiling: BAL.ceiling + (onRock ? BAL.rockCeiling : 0),
-      rate: BAL.rate, dmg: BAL.dmg, cool: 0
+      rate: BAL.rate, dmg: BAL.dmg, cool: 0,
+      turn: BAL.gunTurn
     };
     tur.pos = up.clone().multiplyScalar(RADIUS + (GUN_SEAT + GUN_TIP) * k);
     towers.push(tur);
@@ -1715,7 +1719,8 @@
       pos: up.clone().multiplyScalar(seatY + GUN_TIP * kg),
       cover: ringSet(ci, BAL.range + BAL.cannonRange),
       ceiling: BAL.ceiling + BAL.cannonCeiling,
-      rate: BAL.cannonRate, dmg: BAL.cannonDmg, cool: 0
+      rate: BAL.cannonRate, dmg: BAL.cannonDmg, cool: 0,
+      turn: BAL.gunTurn
     };
 
     // both hulls share the tile's axis, so the stack cannot drift apart
@@ -1767,7 +1772,8 @@
       cover: ringSet(ci, BAL.batteryRange),
       ceiling: BAL.batteryCeiling,
       rate: BAL.batteryRate, dmg: BAL.batteryDmg,
-      splashDmg: BAL.splashDmg, cool: 0
+      splashDmg: BAL.splashDmg, cool: 0,
+      turn: BAL.batteryTurn
     };
     if (modelsOK) {
       mPos.copy(up).multiplyScalar(RADIUS - f.fit * 0.04);
@@ -2394,7 +2400,7 @@
   }
 
   const alienPos = new THREE.Vector3(), aim = new THREE.Vector3(),
-        muzzle = new THREE.Vector3();
+        muzzle = new THREE.Vector3(), qAimGoal = new THREE.Quaternion();
   function posOf(a) { return alienPos.copy(a.dir).multiplyScalar(RADIUS + a.alt); }
 
   function nearestCell(dir) {
@@ -2876,10 +2882,16 @@
       }
       if (aim.lengthSq() > 1e-9) {
         aim.normalize();
-        t.aimDir.copy(aim);
-        t.aimQ.setFromUnitVectors(LOCAL_UP, aim);
+        // the mount slews toward the solution at its own rate instead of
+        // snapping, and the barrel direction is wherever it actually points
+        qAimGoal.setFromUnitVectors(LOCAL_UP, aim);
+        t.aimQ.rotateTowards(qAimGoal, t.turn * dt);
+        t.aimDir.copy(LOCAL_UP).applyQuaternion(t.aimQ);
       }
       if (!best || t.cool > 0) continue;
+      // a gun can only shoot where its barrel points: hold fire until the
+      // swing has settled onto the firing solution
+      if (t.aimDir.angleTo(aim) > BAL.aimSettle) continue;
       t.cool = t.rate;
       // both kinds fire from the tip of whatever is doing the aiming
       muzzle.copy(t.aimDir)
