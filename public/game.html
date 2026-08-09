@@ -84,9 +84,34 @@
   .modal-row b{color:var(--ink);font-weight:400}
   .modal-row.bad b{color:#ff5f56}
   .modal-row.pay b{color:var(--hot)}
-  /* the incoming-force rows slot straight into the card's flex column,
-     costing no gap when the manifest is empty */
-  #modalComp{display:contents}
+
+  /* The wave report: every line starts hidden and fades in on its own cue,
+     one after another, with the numbers counting up as their line lands. */
+  .wave-card{min-width:340px;max-width:420px}
+  .wc-line{
+    opacity:0;transform:translateY(8px);
+    transition:opacity .35s ease, transform .35s ease;
+  }
+  .wc-line.on{opacity:1;transform:none}
+  .wc-title{
+    font-size:26px;letter-spacing:.26em;color:var(--hot);
+    text-transform:uppercase;
+  }
+  .wc-stat{
+    margin-top:13px;font-size:16px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--ink-dim);
+    font-variant-numeric:tabular-nums;
+  }
+  .wc-stat b{color:var(--ink);font-weight:400}
+  .wc-stat.pay b{color:var(--hot)}
+  .wc-stat.bad b{color:#ff5f56}
+  .wc-new{margin:16px auto 0;max-width:36ch;text-align:left}
+  .wc-new-h{color:var(--hot);font-size:12px;letter-spacing:.18em;text-transform:uppercase}
+  .wc-new-d{margin-top:6px;color:var(--ink);font-size:13px;line-height:1.65}
+  .wc-continue{
+    margin-top:18px;width:100%;
+    font-size:16px;letter-spacing:.26em;padding:12px;
+  }
   /* fleet warning: only present on the cards before a wave that adds a
      mothership, and loud, because the answer to it costs a whole break */
   .modal-warn{
@@ -96,7 +121,7 @@
     text-transform:uppercase;
     animation:hpPulse .9s ease-in-out infinite;
   }
-  .modal-warn.on{display:block}
+  .modal-warn.show{display:block}
   .modal.open .modal-card{pointer-events:auto;visibility:visible}
   .modal-card button{margin-top:16px;width:100%}
 
@@ -329,17 +354,18 @@
 </div>
 
 <div class="modal" id="waveModal">
-  <div class="modal-card">
-    <div class="modal-title" id="modalTitle">Wave 1 cleared</div>
-    <div class="modal-rows">
-      <div class="modal-row" id="rowLanded"><span>made landfall</span><b>0</b></div>
-      <div class="modal-row pay"><span>wave payout</span><b id="modalPay">0</b></div>
-      <div class="modal-row"><span>next wave</span><b id="modalNext">2</b></div>
-      <div id="modalComp"></div>
+  <div class="modal-card wave-card">
+    <div class="wc-line wc-title" id="wcTitle">Wave 1 Cleared!</div>
+    <div class="wc-line wc-stat pay">Payout: <b id="wcPay">0</b></div>
+    <div class="wc-line wc-stat" id="wcLandedLine">Invaders Landed: <b id="wcLanded">0</b></div>
+    <div class="wc-line wc-stat" id="wcNextLine">Next Wave: <b id="wcNext"></b></div>
+    <div class="wc-line modal-warn" id="modalWarn">⚠ An additional mothership approaches!</div>
+    <div class="wc-line wc-new" id="wcNew">
+      <div class="wc-new-h">New Enemy Unit:</div>
+      <div class="wc-new-d" id="wcNewDesc"></div>
     </div>
-    <div class="modal-warn" id="modalWarn">⚠ another mothership warps in</div>
-    <button id="modalBtn">Continue</button>
-    <label class="check"><input type="checkbox" id="autoBox">autoplay: continue after 5s</label>
+    <button class="wc-line wc-continue" id="modalBtn">Continue</button>
+    <label class="check wc-line"><input type="checkbox" id="autoBox">Check to auto-continue</label>
   </div>
 </div>
 
@@ -3056,36 +3082,82 @@
 
   // ---------- wave summary ----------
   const waveModal = document.getElementById('waveModal');
-  const modalTitle = document.getElementById('modalTitle');
-  const rowLanded = document.getElementById('rowLanded');
-  const modalPay = document.getElementById('modalPay');
-  const modalNext = document.getElementById('modalNext');
-  const modalComp = document.getElementById('modalComp');
+  const wcTitle = document.getElementById('wcTitle');
+  const wcPay = document.getElementById('wcPay');
+  const wcLanded = document.getElementById('wcLanded');
+  const wcLandedLine = document.getElementById('wcLandedLine');
+  const wcNext = document.getElementById('wcNext');
+  const wcNew = document.getElementById('wcNew');
+  const wcNewDesc = document.getElementById('wcNewDesc');
   const modalWarn = document.getElementById('modalWarn');
-  const ENEMY_NAMES = { viper: 'dropships', hulk: 'hulks', dart: 'darts' };
+  const ENEMY_ONE = { viper: 'dropship', hulk: 'hulk', dart: 'dart' };
+  //  Shown on the card before a type's first wave, so its debut is a
+  //  briefing rather than a surprise.
+  const ENEMY_INTRO = {
+    dart: 'Darts are fast enemy fighters that hunt down your fighters before landing.',
+    hulk: 'Hulks are armoured transports behind energy shields. The shield falls at half health, and a landed hulk hits the ground twice as hard.'
+  };
   let summaryUntil = 0;
+  const wcTimers = [];
+
+  //  The number rides up from zero to its value while its line is landing.
+  function countUp(el, target, delay) {
+    if (reduced) { el.textContent = target; return; }
+    el.textContent = 0;
+    const t0 = performance.now() + delay;
+    const dur = 700;
+    function step(now) {
+      if (!waveModal.classList.contains('open')) { el.textContent = target; return; }
+      const p = Math.min(1, Math.max(0, (now - t0) / dur));
+      el.textContent = Math.round(target * (1 - (1 - p) * (1 - p)));
+      if (p < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
 
   function showSummary(wave, landed, pay) {
-    modalTitle.textContent = 'Wave ' + wave + ' cleared';
-    rowLanded.querySelector('b').textContent = landed;
-    rowLanded.classList.toggle('bad', landed > 0);   // a clean wave should look clean
-    modalPay.textContent = '+' + pay;
-    modalNext.textContent = wave + 1;
-    // the coming wave is already rolled, so the card prints its manifest:
-    // what is coming, by name and number
-    let rows = '';
+    wcTitle.textContent = 'Wave ' + wave + ' Cleared!';
+    wcLandedLine.classList.toggle('bad', landed > 0);   // a clean wave should look clean
+
+    // the coming wave is already rolled, so the card prints its manifest
+    const parts = [];
     if (G.nextComp) {
       for (const t of ['viper', 'dart', 'hulk']) {
         const c = G.nextComp.counts[t];
-        if (c) rows += '<div class="modal-row"><span>' + ENEMY_NAMES[t] + '</span><b>' + c + '</b></div>';
+        if (c) parts.push(c + ' ' + ENEMY_ONE[t] + (c === 1 ? '' : 's'));
       }
     }
-    modalComp.innerHTML = rows;
+    wcNext.textContent = parts.join(', ');
+
+    // ...announces a debuting enemy type...
+    const debut = wave + 1 === BAL.dartFrom ? 'dart'
+                : wave + 1 === BAL.hulkFrom ? 'hulk' : null;
+    wcNew.style.display = debut ? '' : 'none';
+    if (debut) wcNewDesc.textContent = ENEMY_INTRO[debut];
+
     // ...and warns about the one thing worth spending the whole break on
-    modalWarn.textContent = '⚠ An additional mothership approaches!';
-    modalWarn.classList.toggle('on', shipCountFor(wave + 1) > shipCountFor(wave));
+    modalWarn.classList.toggle('show', shipCountFor(wave + 1) > shipCountFor(wave));
+
     waveModal.classList.add('open');
     G.paused = true;                                 // the break stops here
+
+    // the reveal: each visible line lands after the one before it, and the
+    // two counters start rolling the moment their lines appear
+    while (wcTimers.length) clearTimeout(wcTimers.pop());
+    const lines = [...waveModal.querySelectorAll('.wc-line')]
+      .filter(el => getComputedStyle(el).display !== 'none');
+    lines.forEach(el => el.classList.remove('on'));
+    let delay = 150;
+    for (const el of lines) {
+      if (reduced) { el.classList.add('on'); continue; }
+      const at = delay;
+      wcTimers.push(setTimeout(() => el.classList.add('on'), at));
+      if (el.contains(wcPay)) countUp(wcPay, pay, at);
+      if (el.contains(wcLanded)) countUp(wcLanded, landed, at);
+      delay += 350;
+    }
+    if (reduced) { wcPay.textContent = pay; wcLanded.textContent = landed; }
+
     // autoplay just means the card dismisses itself; without it the game
     // waits, which is the point of pausing rather than running a countdown
     summaryUntil = autoContinue ? performance.now() + BAL.summaryTime * 1000 : 0;
@@ -3102,6 +3174,7 @@
     }
     G.paused = false;
     waveModal.classList.remove('open');
+    while (wcTimers.length) clearTimeout(wcTimers.pop());
     summaryUntil = 0;
   }
 
