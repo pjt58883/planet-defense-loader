@@ -1,0 +1,2813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Planet Defense</title>
+<!--
+  Both models were supplied by the user, merged, decimated and re-encoded as
+  quantised vertex data with palette colours sampled from their textures.
+  Neither glTF carried licence metadata.
+-->
+<style>
+  :root{
+    --void:#0b0e13;
+    --void-2:#151b25;
+    --line:#2a3442;
+    --ink:#c9d4e2;
+    --ink-dim:#5c6a7d;
+    --hot:#ffb454;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:var(--void)}
+  body{
+    font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+    color:var(--ink);
+    -webkit-font-smoothing:antialiased;
+  }
+  #stage{
+    position:fixed;inset:0;
+    touch-action:none;
+    cursor:grab;
+    background:radial-gradient(circle at 50% 45%, var(--void-2) 0%, var(--void) 70%);
+  }
+  #stage.dragging{cursor:grabbing}
+  canvas{display:block}
+
+  .hud{
+    position:fixed;
+    z-index:2;
+    pointer-events:none;
+    font-size:11px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+  }
+  .hud.tl{top:20px;left:20px}
+  .hud.bl{bottom:20px;left:20px}
+  .hud.br{bottom:20px;right:20px;text-align:right}
+  .hud.tc{top:20px;left:50%;transform:translateX(-50%);text-align:center}
+
+  /* Wave summary. It sits above the HUD but only the card itself takes
+     clicks, so the planet stays draggable behind it and the break timer
+     keeps running underneath: reading the report is not free time. */
+  .modal{
+    position:fixed;z-index:100;
+    top:50%;left:50%;transform:translate(-50%,-50%) scale(.96);
+    pointer-events:none;opacity:0;
+    transition:opacity .18s ease, transform .18s ease;
+  }
+  .modal.open{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  /* The card never leaves the DOM, it just fades. pointer-events:auto on a
+     child overrides the parent's none, so while closed it was an invisible
+     300px slab parked over the middle of the screen eating every tap on the
+     planet. It only accepts clicks when it is actually open. */
+  .modal-card{
+    pointer-events:none;
+    visibility:hidden;
+    min-width:300px;
+    padding:22px 26px 18px;
+    background:rgba(9,11,14,.985);
+    border:1px solid var(--hot);
+    box-shadow:0 18px 48px rgba(0,0,0,.65), 0 0 26px rgba(255,180,84,.10);
+    text-align:center;
+  }
+  .modal-title{
+    font-size:20px;letter-spacing:.30em;color:var(--hot);
+    text-transform:uppercase;
+  }
+  .modal-rows{margin:18px 0 4px;display:flex;flex-direction:column;gap:10px}
+  .modal-row{
+    display:flex;justify-content:space-between;gap:28px;
+    font-size:15px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--ink-dim);font-variant-numeric:tabular-nums;
+  }
+  .modal-row b{color:var(--ink);font-weight:400}
+  .modal-row.bad b{color:#ff5f56}
+  .modal-row.pay b{color:var(--hot)}
+  .modal.open .modal-card{pointer-events:auto;visibility:visible}
+  .modal-card button{margin-top:16px;width:100%}
+
+  /* Start card. Same click rules as the wave summary: only the card takes
+     pointer events, so the planet stays draggable behind it. */
+  .start-title{
+    font-size:26px;letter-spacing:.34em;color:var(--ink);
+    text-transform:uppercase;
+  }
+  .start-sub{margin-top:10px;color:var(--ink-dim);letter-spacing:.16em}
+  .sizes{display:flex;gap:8px;margin:18px 0 4px}
+  .sizes button{flex:1;padding:10px 6px;line-height:1.5}
+  .sizes button .n{display:block;color:var(--ink-dim);margin-top:4px}
+  .sizes button[aria-pressed="true"]{
+    border-color:var(--hot);color:var(--hot);
+    background:rgba(255,180,84,.10);
+  }
+  .sizes button[aria-pressed="true"] .n{color:var(--hot)}
+  .check{
+    display:flex;align-items:center;justify-content:center;gap:10px;
+    margin-top:14px;color:var(--ink-dim);cursor:pointer;user-select:none;
+  }
+  .check input{
+    appearance:none;-webkit-appearance:none;
+    width:14px;height:14px;margin:0;
+    border:1px solid var(--line);background:transparent;cursor:pointer;
+  }
+  .check input:checked{background:var(--hot);border-color:var(--hot)}
+  /* the menu outranks every other panel. Without this, paint order is
+     document order and the top-centre block, which comes last, draws its
+     bar straight over an open menu. */
+  .hud.tr{top:20px;right:20px;text-align:right;z-index:50}
+
+  /* world controls live behind one button so they stay out of the way of
+     the things you touch every wave */
+  /* .hud is pointer-events:none so the panels never block dragging the
+     planet. Anything clickable inside one has to opt back in, or the click
+     falls through to the canvas and starts an orbit instead. */
+  .menu{position:relative;display:inline-block;pointer-events:auto}
+  .menu-panel{
+    position:absolute;top:calc(100% + 8px);right:0;
+    display:none;flex-direction:column;gap:6px;
+    padding:8px;
+    background:rgba(9,11,14,.985);
+    border:1px solid var(--line);
+    border-radius:2px;
+    min-width:168px;
+    box-shadow:0 10px 24px rgba(0,0,0,.55);
+  }
+  .menu-panel.open{display:flex}
+  .menu-panel button{width:100%;text-align:left}
+  .menu-panel .count{padding:2px 2px 0;text-align:left}
+
+  .stats{display:flex;gap:24px;align-items:center;justify-content:center;
+         margin-top:12px;font-size:22px;letter-spacing:.10em;
+         font-variant-numeric:tabular-nums}
+  .stat{color:var(--ink-dim)}
+  .stat b{color:var(--ink);font-weight:400;margin-left:10px}
+  .stat.soon b{color:var(--hot)}
+  .stat.hurt b{color:#ff5f56}
+  /* Integrity is the only life total in the game, so it gets the loudest
+     element on screen: black tube, red rule, red column. */
+  .hpbar{
+    position:relative;
+    width:min(440px,64vw);height:34px;margin:6px auto 0;
+    background:#050507;
+    border:2px solid #ff2f2f;
+    box-shadow:0 0 14px rgba(255,47,47,.28), inset 0 0 22px rgba(255,47,47,.10);
+    overflow:hidden;
+  }
+  .hpfill{
+    height:100%;width:100%;
+    background:linear-gradient(180deg,#ff6a52 0%,#e01f14 55%,#8d0d06 100%);
+    box-shadow:0 0 18px rgba(255,70,45,.55);
+    transition:width .18s linear;
+  }
+  /* segment ticks, drawn over the fill so they read at any level */
+  .hpbar::after{
+    content:'';position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(90deg,
+      rgba(0,0,0,0) 0 20px, rgba(0,0,0,.55) 20px 23px);
+  }
+  .hpfill.low{
+    background:linear-gradient(180deg,#ff8a6a 0%,#ff2f2f 55%,#a11109 100%);
+    animation:hpPulse .8s ease-in-out infinite;
+  }
+  @keyframes hpPulse{ 50%{ filter:brightness(1.55) } }
+  .hplabel{
+    font-size:22px;
+    letter-spacing:.20em;color:var(--ink);
+    font-variant-numeric:tabular-nums;
+  }
+  .hplabel.low{color:#ff5f56}
+  .alert{
+    margin-top:8px;color:var(--hot);min-height:13px;
+    transition:opacity .3s ease;
+  }
+  .alert.quiet{opacity:0}
+
+  .title{font-size:12px;letter-spacing:.34em;color:var(--ink)}
+
+  .hint{
+    color:var(--ink-dim);
+    transition:opacity .6s ease, color .2s ease;
+    margin-bottom:12px;
+    max-width:48ch;
+  }
+  .hint.gone{opacity:0}
+  .hint.live{opacity:1;color:var(--hot)}
+
+  .bar{
+    pointer-events:auto;
+    display:flex;
+    gap:8px;
+    align-items:center;
+    flex-wrap:wrap;
+  }
+  button{
+    font:inherit;
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--ink);
+    background:rgba(21,27,37,.82);
+    border:1px solid var(--line);
+    border-radius:2px;
+    padding:9px 14px;
+    cursor:pointer;
+    transition:border-color .15s ease, color .15s ease, background .15s ease;
+    -webkit-tap-highlight-color:transparent;
+  }
+  button:hover:not(:disabled){border-color:var(--ink-dim)}
+  button:focus-visible{outline:2px solid var(--hot);outline-offset:2px}
+  button[aria-pressed="true"]{
+    color:var(--void);
+    background:var(--hot);
+    border-color:var(--hot);
+  }
+  button:disabled{opacity:.35;cursor:default}
+  .count{
+    color:var(--ink-dim);
+    font-size:11px;
+    letter-spacing:.12em;
+    font-variant-numeric:tabular-nums;
+  }
+  @media (max-width:520px){
+    .hud{font-size:10px}
+    .hud.tl{top:14px;left:14px}
+    .hud.bl{bottom:14px;left:14px}
+    .hud.br{bottom:14px;right:14px}
+    .hud.tc{top:14px}
+    .hud.tr{top:14px;right:14px}
+    .hpbar{height:26px;margin-top:8px}
+    .stats{font-size:20px;gap:16px;letter-spacing:.06em}
+    .modal-card{min-width:0;width:min(300px,84vw);padding:18px 18px 14px}
+    .modal-title{font-size:17px;letter-spacing:.22em}
+    .modal-row{font-size:13px;gap:16px}
+    .start-title{font-size:19px;letter-spacing:.22em}
+    .sizes button{padding:8px 4px}
+    .hplabel{font-size:20px;letter-spacing:.14em}
+    .hpbar::after{background:repeating-linear-gradient(90deg,
+      rgba(0,0,0,0) 0 14px, rgba(0,0,0,.55) 14px 16px)}
+    button{padding:11px 12px}
+  }
+</style>
+</head>
+<body>
+
+<div id="stage" role="application" aria-label="Rotatable hex-tiled sphere. Use arrow keys to orbit the camera." tabindex="0"></div>
+
+<div class="hud tl">
+  <div class="title">WORLD</div>
+</div>
+
+<div class="hud tr">
+  <div class="menu">
+    <button id="menuBtn" aria-expanded="false" aria-controls="menuPanel">Menu ▾</button>
+    <div class="menu-panel" id="menuPanel">
+      <button id="randBtn">New world</button>
+      <button id="gridBtn">Grid: 362</button>
+      <span class="count" id="count"></span>
+    </div>
+  </div>
+</div>
+
+<div class="hud bl">
+  <div class="hint gone" id="hint"></div>
+  <div class="bar">
+    <button id="buildBtn">Build turret (5)</button>
+    <button id="jetBtn">Build fighter (10)</button>
+    <button id="foundryBtn">Build foundry (20)</button>
+    <button id="cannonBtn">Build sea cannon (12)</button>
+    <button id="waveBtn">Call wave</button>
+    <button id="viewBtn">Surface view</button>
+  </div>
+</div>
+
+<div class="modal open" id="startModal">
+  <div class="modal-card">
+    <div class="start-title">Hex Defense</div>
+    <div class="start-sub">Choose a world</div>
+    <div class="sizes">
+      <button data-freq="0" aria-pressed="false">Small<span class="n">92 tiles</span></button>
+      <button data-freq="1" aria-pressed="true">Medium<span class="n">362 tiles</span></button>
+      <button data-freq="2" aria-pressed="false">Large<span class="n">812 tiles</span></button>
+    </div>
+    <button id="startBtn">Start</button>
+  </div>
+</div>
+
+<div class="modal" id="waveModal">
+  <div class="modal-card">
+    <div class="modal-title" id="modalTitle">Wave 1 cleared</div>
+    <div class="modal-rows">
+      <div class="modal-row" id="rowLanded"><span>made landfall</span><b>0</b></div>
+      <div class="modal-row pay"><span>wave payout</span><b id="modalPay">0</b></div>
+      <div class="modal-row"><span>next wave</span><b id="modalNext">2</b></div>
+    </div>
+    <button id="modalBtn">Continue</button>
+    <label class="check"><input type="checkbox" id="autoBox">autoplay: continue after 5s</label>
+  </div>
+</div>
+
+<div class="hud tc">
+  <div class="hplabel" id="hpVal">integrity 100</div>
+  <div class="hpbar">
+    <div class="hpfill" id="hpFill" style="width:100%"></div>
+  </div>
+  <div class="stats">
+    <span class="stat">gold<b id="goldVal">25</b></span>
+    <span class="stat">wave<b id="waveVal">0</b></span>
+    <span class="stat">next<b id="nextVal">20s</b></span>
+  </div>
+  <div class="alert quiet" id="alert"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  const stage = document.getElementById('stage');
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  stage.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.05, 200);
+
+  const RADIUS = 1.0;
+  // Tiles meet edge to edge. The dual cells tile the sphere exactly, so
+  // neighbouring tiles share corner vertices and the ground is watertight:
+  // no gap for anything to show through, and nothing floating above anything.
+  const TILE_INSET = 1.0;
+  const TILE_BORDER = 0.13;          // the grid line is painted, not a gap
+
+  // Everything that is part of the globe lives in this group. In surface view
+  // the camera is bolted down and THIS is what turns, so the ball spins about
+  // its own centre instead of the camera swinging around it. Lights are left
+  // on the scene so the lighting stays put while the terrain moves under it.
+  const world = new THREE.Group();
+  scene.add(world);
+
+  // A backstop only, never meant to be seen. It has to clear the deepest thing
+  // in the world, which is now the point at the bottom of a deep water tile.
+  const shell = new THREE.Mesh(
+    new THREE.SphereGeometry(RADIUS * 0.90, 96, 64),
+    new THREE.MeshStandardMaterial({ color: 0x1d2a1c, metalness: 0.1, roughness: 0.9 })
+  );
+  world.add(shell);
+
+  scene.add(new THREE.HemisphereLight(0x8fb6ff, 0x1a1208, 0.55));
+  const key = new THREE.DirectionalLight(0xfff0dd, 1.5); key.position.set(4, 6, 5);
+  const fill = new THREE.DirectionalLight(0x6fa8ff, 0.7); fill.position.set(-5, -2, -3);
+  const rim = new THREE.DirectionalLight(0xffb454, 0.9); rim.position.set(0, -5, 4);
+  scene.add(key, fill, rim);
+
+  // =====================================================================
+  //  Goldberg polyhedron: subdivide an icosahedron, project it onto the
+  //  sphere, then take its dual. Every original vertex becomes one tile.
+  //  Twelve of them are pentagons no matter the frequency; that is a
+  //  property of the sphere, not a bug in the tiling.
+  // =====================================================================
+  function buildTiles(freq, radius) {
+    const t = (1 + Math.sqrt(5)) / 2;
+    const base = [
+      [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+      [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+      [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]
+    ];
+    const baseFaces = [
+      [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+      [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+      [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+      [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]
+    ];
+
+    const verts = [];           // unit vectors
+    const lookup = new Map();
+    function addVert(x, y, z) {
+      const l = Math.hypot(x, y, z);
+      x /= l; y /= l; z /= l;
+      const k = Math.round(x * 1e6) + ',' + Math.round(y * 1e6) + ',' + Math.round(z * 1e6);
+      let i = lookup.get(k);
+      if (i === undefined) {
+        i = verts.length;
+        verts.push(new THREE.Vector3(x, y, z));
+        lookup.set(k, i);
+      }
+      return i;
+    }
+
+    const tris = [];
+    for (const f of baseFaces) {
+      const A = base[f[0]], B = base[f[1]], C = base[f[2]];
+      const rows = [];
+      for (let i = 0; i <= freq; i++) {
+        const row = [];
+        for (let j = 0; j <= freq - i; j++) {
+          const a = (freq - i - j) / freq, b = i / freq, c = j / freq;
+          row.push(addVert(A[0] * a + B[0] * b + C[0] * c,
+                           A[1] * a + B[1] * b + C[1] * c,
+                           A[2] * a + B[2] * b + C[2] * c));
+        }
+        rows.push(row);
+      }
+      for (let i = 0; i < freq; i++) {
+        for (let j = 0; j < freq - i; j++) {
+          tris.push([rows[i][j], rows[i + 1][j], rows[i][j + 1]]);
+          if (j < freq - i - 1) tris.push([rows[i + 1][j], rows[i + 1][j + 1], rows[i][j + 1]]);
+        }
+      }
+    }
+
+    // face centroids become the tile corners
+    const cent = tris.map(tr => {
+      const v = new THREE.Vector3()
+        .add(verts[tr[0]]).add(verts[tr[1]]).add(verts[tr[2]]).normalize();
+      return v;
+    });
+
+    const around = verts.map(() => []);
+    tris.forEach((tr, fi) => { around[tr[0]].push(fi); around[tr[1]].push(fi); around[tr[2]].push(fi); });
+
+    // walk each tile's corners into angular order around its own normal
+    const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), d = new THREE.Vector3();
+    const cells = [];
+    for (let vi = 0; vi < verts.length; vi++) {
+      const n = verts[vi];
+      e1.set(0, 0, 1);
+      if (Math.abs(n.z) > 0.9) e1.set(1, 0, 0);
+      e1.addScaledVector(n, -e1.dot(n)).normalize();
+      e2.crossVectors(n, e1);
+      const ring = around[vi].map(fi => {
+        d.copy(cent[fi]).addScaledVector(n, -cent[fi].dot(n));
+        return { fi, a: Math.atan2(d.dot(e2), d.dot(e1)) };
+      }).sort((p, q) => p.a - q.a).map(p => cent[p.fi]);
+      cells.push({ center: n.clone(), ring });
+    }
+
+    // ---- per-cell metrics only. The geometry is built separately, because
+    //      every tile IS a terrain tile and its shape depends on its type.
+    const inradius = [], circum = [];
+    const tmp = new THREE.Vector3();
+    let spacing = 0;
+
+    cells.forEach(cell => {
+      const ctr = tmp.copy(cell.center).multiplyScalar(radius).clone();
+      const corners = cell.ring.map(r => {
+        const p = r.clone().multiplyScalar(radius);
+        return p.lerp(ctr, 1 - TILE_INSET).setLength(radius);
+      });
+      const e = corners[0].clone().sub(ctr).cross(corners[1].clone().sub(ctr));
+      if (e.dot(ctr) < 0) cell.ring.reverse();      // wind every cell outward once, here
+      spacing += corners[0].distanceTo(ctr) * 2 / cells.length;
+
+      let inr = Infinity, cir = 0;
+      for (let i = 0; i < corners.length; i++) {
+        const a = corners[i], b = corners[(i + 1) % corners.length];
+        const m = Math.hypot((a.x + b.x) / 2 - ctr.x, (a.y + b.y) / 2 - ctr.y, (a.z + b.z) / 2 - ctr.z);
+        if (m < inr) inr = m;
+        cir = Math.max(cir, a.distanceTo(ctr));
+      }
+      inradius.push(inr);
+      circum.push(cir);
+    });
+
+    // Which tiles touch which. Every corner of the dual is shared by exactly
+    // three cells, and any two of those three share an edge, so cells that meet
+    // at a corner are neighbours. The ring entries are the same Vector3 objects
+    // across cells, so this is identity lookup, no float comparison needed.
+    const atCorner = new Map();
+    cells.forEach((cell, ci) => cell.ring.forEach(p => {
+      let list = atCorner.get(p);
+      if (!list) { list = []; atCorner.set(p, list); }
+      list.push(ci);
+    }));
+    const neighbours = cells.map(() => new Set());
+    atCorner.forEach(list => {
+      for (const a of list) for (const b of list) if (a !== b) neighbours[a].add(b);
+    });
+
+    const meanInr = inradius.reduce((a, b) => a + b, 0) / inradius.length;
+
+    return { cells, inradius, circum, spacing, atCorner, meanInr,
+             neighbours: neighbours.map(s => [...s]),
+             pentagons: cells.filter(x => x.ring.length === 5).length };
+  }
+
+  // ---------- tile state ----------
+  const FREQS = [3, 6, 9];
+  let freqIdx = 1;
+  let tiles = null, tileMesh = null;
+  let cellType = null;               // one terrain id per cell; this IS the grid
+  let cellGeo = null;                // that cell's generated triangles, cached
+
+  let coast = null;                  // water tile touching land
+  // Beaches live ONLY inside water tiles, so water can never wash into a land
+  // tile. Inside a coast tile the beach is a contour: 1 at any corner that
+  // touches land, 0 at the tile centre, cut at BEACH_LEVEL. Corners are shared
+  // between tiles, so two neighbouring coast tiles cut their shared edge at the
+  // identical point and their beaches join into one continuous strip.
+  let cornerLand = null;             // Map: corner point -> 1 if land touches it
+  const BEACH_LEVEL = 0.55;
+  let WATER_DROP = 0;                // how far the water sits below the land
+  let cellSig = null;                // what each cached tile was generated for
+  // Generating a tile is the expensive part, so each cell's triangles are
+  // cached and only the tile you actually tapped is regenerated. Rebuilding is
+  // then a straight typed-array copy.
+  function regenCell(ci) {
+    const t = terrainArrays(ci, cellType[ci]);
+    cellGeo[ci] = { pos: new Float32Array(t.pos), col: new Float32Array(t.col) };
+  }
+
+  // Water splits itself: a lake tile with any non-water neighbour is coast,
+  // otherwise it is deep. Painting one tile can therefore change how its
+  // neighbours look, so this reclassifies everything and regenerates only the
+  // tiles whose (terrain, water class) actually changed.
+  function refreshWater() {
+    const N = cellType.length;
+    for (let ci = 0; ci < N; ci++) {
+      if (cellType[ci] !== 'lake') { coast[ci] = false; continue; }
+      let touchesLand = false;
+      for (const nb of tiles.neighbours[ci]) {
+        if (cellType[nb] !== 'lake') { touchesLand = true; break; }
+      }
+      coast[ci] = touchesLand;
+    }
+    // A corner counts as land if ANY of the three cells meeting there is land.
+    // Every corner of a land tile therefore reads 1, so land tiles are never
+    // cut and the water stays inside the water tiles.
+    cornerLand.clear();
+    tiles.atCorner.forEach((list, p) => {
+      let land = 0;
+      for (const ci of list) if (cellType[ci] !== 'lake') { land = 1; break; }
+      cornerLand.set(p, land);
+    });
+    WATER_DROP = 0.30 * tiles.meanInr;   // one depth for the whole grid, so
+                                         // neighbours always agree on a corner
+    for (let ci = 0; ci < N; ci++) {
+      // A tile depends on its terrain and on which of its corners touch land.
+      let sig = cellType[ci] + (cellType[ci] === 'lake' ? (coast[ci] ? ':c' : ':d') : '');
+      for (const p of tiles.cells[ci].ring) sig += cornerLand.get(p);
+      if (sig !== cellSig[ci]) { cellSig[ci] = sig; regenCell(ci); }
+    }
+  }
+
+  // Merge every cell into one mesh, so the whole globe is one draw call
+  // however much of it is painted.
+  const cellFaceStart = [];          // first triangle index of each cell in the merged mesh
+
+  function rebuildTerrain() {
+    const N = cellGeo.length;
+    let total = 0;
+    for (let ci = 0; ci < N; ci++) total += cellGeo[ci].pos.length;
+
+    const position = new Float32Array(total);
+    const colour = new Float32Array(total);
+
+    let o = 0;
+    cellFaceStart.length = N;
+    for (let ci = 0; ci < N; ci++) {
+      const g = cellGeo[ci];
+      cellFaceStart[ci] = o / 9;     // 9 floats per triangle
+      position.set(g.pos, o);
+      colour.set(g.col, o);
+      o += g.pos.length;
+    }
+
+    if (tileMesh) { world.remove(tileMesh); tileMesh.geometry.dispose(); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(position, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colour, 3));
+    geo.computeVertexNormals();
+    tileMesh = new THREE.Mesh(geo, terrainMat);
+    world.add(tileMesh);
+
+    updateCount();
+  }
+
+  function makeGrid() {
+    tiles = buildTiles(FREQS[freqIdx], RADIUS);
+    const N = tiles.cells.length;
+    cellType = new Array(N).fill('plain');
+    cellGeo = new Array(N);
+    coast = new Array(N).fill(false);
+    cornerLand = new Map();
+    cellSig = new Array(N).fill(null);
+    fitCache.clear();
+    refreshWater();
+    rebuildTerrain();
+
+    document.getElementById('gridBtn').textContent = 'Grid: ' + tiles.cells.length;
+  }
+
+  // =====================================================================
+  //  Terrain tiles.
+  //
+  //  Every tile in the grid IS one of these, 'plain' included, built from
+  //  that cell's OWN polygon, which is why pentagons and the stretched
+  //  hexagons come out right.
+  //
+  //  The rule that keeps the world looking like one sphere: a tile's OUTER
+  //  EDGE always sits exactly on radius R, same as every other tile. Terrain
+  //  grows out of the face or sinks into it, but the face is never lifted off
+  //  the ball, so tiles meet flush instead of shingling like scales.
+  //
+  //  Sizes are multiples of the cell's inscribed radius, so a mountain looks
+  //  the same at 92 tiles as at 812 rather than becoming a spike or a bump.
+  // =====================================================================
+  const terrainMat = new THREE.MeshStandardMaterial({
+    vertexColors: true, metalness: 0.15, roughness: 0.7, flatShading: true
+  });
+
+  // deterministic per tile, so a tile you clear and repaint looks the same
+  function rng(seed) {
+    let a = (seed * 1831565813) | 0;
+    return function () {
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // Height is a pure function of the landness field, and the field lives on
+  // corners that neighbouring tiles share. So two tiles meeting at a corner
+  // always place that corner at the same radius, and the ground stays
+  // watertight even though the shore cuts across tiles at any angle.
+  // Corner height depends only on whether land touches that corner, which is a
+  // property of the corner and not of the tile asking, so every tile that meets
+  // there places it at exactly the same radius.
+  function cornerHeight(p) { return cornerLand.get(p) ? 0 : -WATER_DROP; }
+
+  function terrainArrays(ci, kind) {
+    const cell = tiles.cells[ci];
+    const inr = tiles.inradius[ci];
+    const rand = rng(ci * 977 + kind.length * 31);
+
+    const n = cell.center.clone().normalize();
+    const ctr = n.clone().multiplyScalar(RADIUS);
+
+    const e1 = new THREE.Vector3(0, 0, 1);
+    if (Math.abs(n.z) > 0.9) e1.set(1, 0, 0);
+    e1.addScaledVector(n, -e1.dot(n)).normalize();
+    const e2 = new THREE.Vector3().crossVectors(n, e1);
+
+    const pos = [], col = [];
+    const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), tmpC = new THREE.Vector3();
+
+    function lift(p, h) { return p.clone().setLength(RADIUS + h); }
+    function at(u, v, h) {
+      return new THREE.Vector3().copy(ctr)
+        .addScaledVector(e1, u).addScaledVector(e2, v).setLength(RADIUS + h);
+    }
+    function tri(a, b, c, ca, cb, cc) {
+      pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z);
+      col.push(ca[0], ca[1], ca[2], cb[0], cb[1], cb[2], cc[0], cc[1], cc[2]);
+    }
+    function quad(a, b, c, d, cl) { tri(a, b, c, cl, cl, cl); tri(a, c, d, cl, cl, cl); }
+
+    // The tile outline, each corner already sitting at its field height.
+    const flat = cell.ring.map(r => r.clone().multiplyScalar(RADIUS));
+    const vR = cell.ring.map(p => cornerLand.get(p));
+    const hR = cell.ring.map(cornerHeight);
+    const vC = 0;                     // the centre of a water tile is always sea
+    // ...but only a water tile. Land sits flat at ground level; this was
+    // pinned to the water level for every tile, which put an inverted point in
+    // the middle of every hex on the globe.
+    const hC = kind === 'lake' ? -WATER_DROP : 0;
+    const rim = flat.map((p, i) => lift(p, hR[i]));
+
+    function border(col, dh) {
+      const inner = flat.map((p, i) => lift(p.clone().lerp(ctr, TILE_BORDER), hR[i] + (dh || 0)));
+      for (let i = 0; i < rim.length; i++) {
+        const j = (i + 1) % rim.length;
+        quad(rim[i], rim[j], inner[j], inner[i], col);
+      }
+      return inner;
+    }
+    function ring(k, dh) {
+      return flat.map((p, i) => lift(p.clone().lerp(ctr, 1 - k), hR[i] + (dh || 0)));
+    }
+    function band(a, b, cl) {
+      for (let i = 0; i < a.length; i++) {
+        const j = (i + 1) % a.length;
+        quad(a[i], a[j], b[j], b[i], cl);
+      }
+    }
+    function face(from, colEdge, colCentre, centreH) {
+      const c = lift(ctr, hC + (centreH || 0));
+      for (let i = 0; i < from.length; i++) {
+        const j = (i + 1) % from.length;
+        tri(from[i], from[j], c, colEdge, colEdge, colCentre || colEdge);
+      }
+    }
+    function cone(u, v, r, h, baseH, side, tip) {
+      const SEG = 7, base = [];
+      for (let i = 0; i < SEG; i++) {
+        const a = (i / SEG) * Math.PI * 2;
+        base.push(at(u + Math.cos(a) * r, v + Math.sin(a) * r, baseH));
+      }
+      const apex = at(u, v, baseH + h);
+      for (let i = 0; i < SEG; i++) tri(base[i], base[(i + 1) % SEG], apex, side, side, tip || side);
+    }
+    function scatter(pull) {
+      const k = Math.floor(rand() * flat.length);
+      const a = flat[k], b = flat[(k + 1) % flat.length];
+      let s = rand(), t = rand();
+      if (s + t > 1) { s = 1 - s; t = 1 - t; }
+      const inset = pull * (1 - TILE_BORDER);
+      tmpA.copy(ctr).addScaledVector(tmpB.copy(a).sub(ctr), s * inset)
+                    .addScaledVector(tmpC.copy(b).sub(ctr), t * inset);
+      tmpA.sub(ctr);
+      return [tmpA.dot(e1), tmpA.dot(e2)];
+    }
+
+    // ---- clip a polygon at the waterline. Points carry their own value, and a
+    //      crossing is interpolated from the two values, so any two polygons
+    //      sharing an edge produce the identical crossing point.
+    // Cut a polygon along the beach line. The crossing point is a straight lerp
+    // of the two endpoints as they already sit in space - no re-projection - so
+    // it lands exactly on the shared edge and two tiles computing it from the
+    // same pair of corners get bit-identical results.
+    function clip(P, V, colAbove, colBelow) {
+      const up = [], dn = [];
+      for (let k = 0; k < P.length; k++) {
+        const k2 = (k + 1) % P.length;
+        const a = V[k] >= BEACH_LEVEL, b = V[k2] >= BEACH_LEVEL;
+        (a ? up : dn).push(P[k]);
+        if (a !== b) {
+          const t = (BEACH_LEVEL - V[k]) / (V[k2] - V[k]);
+          const m = P[k].clone().lerp(P[k2], t);
+          up.push(m); dn.push(m);
+        }
+      }
+      for (let k = 1; k + 1 < up.length; k++) tri(up[0], up[k], up[k + 1], colAbove, colAbove, colAbove);
+      for (let k = 1; k + 1 < dn.length; k++) tri(dn[0], dn[k], dn[k + 1], colBelow, colBelow, colBelow);
+    }
+
+    if (kind === 'lake' && coast[ci]) {
+      // COAST. Beach around every corner that touches land, water in the middle.
+      // Both the rim band and the fan are clipped, so the beach reaches the tile
+      // edge and joins the neighbouring coast tile's beach into one strip.
+      const sand = [0.749, 0.647, 0.427], sandDark = [0.463, 0.396, 0.259];
+      const sea  = [0.161, 0.510, 0.588], seaDark  = [0.098, 0.318, 0.400];
+
+      const inner = flat.map((p, i) => lift(p.clone().lerp(ctr, TILE_BORDER), hR[i]));
+      for (let i = 0; i < rim.length; i++) {
+        const j = (i + 1) % rim.length;
+        clip([rim[i], rim[j], inner[j], inner[i]],
+             [vR[i], vR[j], vR[j], vR[i]], sandDark, seaDark);
+      }
+      const c0 = lift(ctr, hC);
+      for (let i = 0; i < inner.length; i++) {
+        const j = (i + 1) % inner.length;
+        clip([c0, inner[i], inner[j]], [vC, vR[i], vR[j]], sand, sea);
+      }
+
+    } else if (kind === 'plain') {
+      const w = Math.sin(ci * 12.9898) * 43758.5453;
+      const j = 0.93 + (w - Math.floor(w)) * 0.14;
+      const grass = [0.342 * j, 0.624 * j, 0.195 * j];
+      face(border([grass[0] * 0.50, grass[1] * 0.50, grass[2] * 0.50]), grass);
+
+    } else if (kind === 'swamp') {
+      // much darker than forest, and dead flat like the rest of the land
+      face(border([0.020, 0.045, 0.028]), [0.047, 0.106, 0.063], [0.056, 0.126, 0.072]);
+
+    } else if (kind === 'forest') {
+      face(border([0.062, 0.132, 0.070]), [0.129, 0.271, 0.145], [0.153, 0.310, 0.165]);
+
+    } else if (kind === 'mountain') {
+      const rock = [0.132, 0.128, 0.118], scree = [0.096, 0.094, 0.088];
+      face(border([0.058, 0.057, 0.055]), scree, rock);
+
+    } else if (kind === 'lake') {
+      // DEEP water: the mirror of the desert tile. Desert fans up to a shallow
+      // point at its centre; this fans down to one. Its rim already sits low,
+      // because the field puts it there.
+      const lip = ring(1 - TILE_BORDER, -0.06 * inr);
+      band(border([0.118, 0.126, 0.145]), lip, [0.086, 0.094, 0.114]);
+      face(lip, [0.055, 0.180, 0.353], [0.016, 0.063, 0.169], -0.16 * inr);
+
+    } else {   // desert
+      const sand = [0.796, 0.659, 0.404], pale = [0.882, 0.776, 0.541];
+      face(border([0.418, 0.342, 0.202]), sand, pale);   // flat, like the rest
+    }
+
+    return { pos, col };
+  }
+
+  // =====================================================================
+  //  Randomise the whole globe.
+  //
+  //  Pure per-tile randomness looks like TV static, so this lays down two
+  //  smooth fields over the sphere - elevation and moisture - and reads the
+  //  terrain out of them, which gives continent-shaped runs of forest and
+  //  desert instead of confetti. Thresholds are percentiles of the actual
+  //  values, so every world gets a full mix rather than occasionally coming
+  //  out with no mountains at all.
+  // =====================================================================
+  function noiseField(octaves) {
+    const w = [];
+    for (let i = 0; i < octaves; i++) {
+      let x = Math.random() * 2 - 1, y = Math.random() * 2 - 1, z = Math.random() * 2 - 1;
+      const l = Math.hypot(x, y, z) || 1, f = 1.6 + i * 1.9;   // coarse first, then detail
+      w.push({ x: x / l * f, y: y / l * f, z: z / l * f,
+               p: Math.random() * 6.283, a: 1 / (1 + i * 0.8) });
+    }
+    const norm = w.reduce((t, o) => t + o.a, 0);
+    return p => w.reduce((t, o) =>
+      t + o.a * Math.sin(p.x * o.x + p.y * o.y + p.z * o.z + o.p), 0) / norm;
+  }
+
+  function percentile(arr, q) {
+    const s = arr.slice().sort((a, b) => a - b);
+    return s[Math.min(s.length - 1, Math.max(0, Math.floor(q * s.length)))];
+  }
+
+  function randomise() {
+    const N = tiles.cells.length;
+    const elev = noiseField(5), moist = noiseField(4);
+    const e = new Array(N), m = new Array(N);
+    for (let ci = 0; ci < N; ci++) { e[ci] = elev(tiles.cells[ci].center); m[ci] = moist(tiles.cells[ci].center); }
+
+    const hi = percentile(e, 0.88), lo = percentile(e, 0.18);
+    const mid = [];
+    for (let ci = 0; ci < N; ci++) if (e[ci] <= hi && e[ci] >= lo) mid.push(m[ci]);
+    const wet = percentile(mid, 0.68), dry = percentile(mid, 0.26);
+
+    for (let ci = 0; ci < N; ci++) {
+      let k;
+      if (e[ci] > hi) k = 'mountain';
+      else if (e[ci] < lo) k = 'lake';
+      else if (m[ci] > wet) k = 'forest';
+      else if (m[ci] < dry) k = 'desert';
+      else k = 'plain';
+      cellType[ci] = k;
+    }
+    capMountains(e, m, wet, dry);
+    growSwamps();
+    refreshWater();
+    rebuildTerrain();
+    if (G.ready) resetGame();        // the old defences do not survive a new world
+  }
+
+  // Swamp forms where forest meets the sea. Any water tile touching land is a
+  // coast tile by definition, so a forest with a water neighbour is exactly a
+  // forest touching a coast, and half of those turn to swamp.
+  const SWAMP_CHANCE = 0.5;
+
+  function growSwamps() {
+    const N = cellType.length;
+    const next = cellType.slice();          // decide from the original map, so
+    for (let ci = 0; ci < N; ci++) {        // one swamp cannot seed the next
+      if (cellType[ci] !== 'forest') continue;
+      if (!tiles.neighbours[ci].some(nb => cellType[nb] === 'lake')) continue;
+      if (Math.random() < SWAMP_CHANCE) next[ci] = 'swamp';
+    }
+    for (let ci = 0; ci < N; ci++) cellType[ci] = next[ci];
+  }
+
+  const MAX_MASSIF = 5;
+
+  // The noise happily produces mountain blobs a third of a continent wide. This
+  // walks each connected run of mountains and carves it into massifs of at most
+  // MAX_MASSIF tiles, each separated from the next by at least one tile of
+  // ordinary ground, so a range reads as a chain of peaks instead of a plateau.
+  function capMountains(e, m, wet, dry) {
+    const N = cellType.length;
+    const demote = ci => {
+      cellType[ci] = m[ci] > wet ? 'forest' : m[ci] < dry ? 'desert' : 'plain';
+    };
+
+    const seen = new Uint8Array(N);
+    for (let start = 0; start < N; start++) {
+      if (cellType[start] !== 'mountain' || seen[start]) continue;
+
+      // the whole connected run of mountains this tile belongs to
+      const comp = [start];
+      seen[start] = 1;
+      for (let i = 0; i < comp.length; i++) {
+        for (const nb of tiles.neighbours[comp[i]]) {
+          if (!seen[nb] && cellType[nb] === 'mountain') { seen[nb] = 1; comp.push(nb); }
+        }
+      }
+      if (comp.length <= MAX_MASSIF) continue;
+
+      // carve it up, always starting from the highest ground left
+      const left = new Set(comp);
+      while (left.size) {
+        let peak = -1;
+        for (const ci of left) if (peak < 0 || e[ci] > e[peak]) peak = ci;
+
+        const blob = [peak];
+        left.delete(peak);
+        for (let i = 0; i < blob.length && blob.length < MAX_MASSIF; i++) {
+          for (const nb of tiles.neighbours[blob[i]]) {
+            if (blob.length >= MAX_MASSIF) break;
+            if (left.has(nb)) { left.delete(nb); blob.push(nb); }
+          }
+        }
+
+        // anything still touching this massif becomes the gap around it
+        const gap = [];
+        for (const ci of blob) {
+          for (const nb of tiles.neighbours[ci]) if (left.has(nb)) gap.push(nb);
+        }
+        for (const ci of gap) { left.delete(ci); demote(ci); }
+      }
+    }
+  }
+
+  // =====================================================================
+  //  GAME LAYER
+  //
+  //  The aliens never reach the ground on purpose. They descend toward a
+  //  target tile from orbit and the turrets have a window to kill them on
+  //  the way down. Anything that touches the surface costs planetary
+  //  integrity, which is the only life total in the game.
+  //
+  //  A turret's reach is expressed in TILE RINGS, not metres. It can engage
+  //  anything falling toward a tile within N rings of its own tile, once
+  //  that thing drops below its ceiling. Coverage is therefore a set of
+  //  tiles you can highlight and count, rather than an invisible cone.
+  // =====================================================================
+  const G = {
+    hp: 100, hpMax: 100, gold: 25, wave: 0,
+    inWave: false, breakLeft: 20, spawnTimer: 0, queue: [],
+    ready: false, over: false, started: false, paused: false,
+    build: null, bearing: null,
+    zoneAng: 0.38, shipDist: 1.55, landed: 0, ships: []
+  };
+
+  // Every number that decides whether the game is fair lives here and nowhere
+  // else, so it can be swept from a test harness instead of guessed at.
+  const BAL = {
+    turretCost: 5,
+    range: 2, ceiling: 0.95, rate: 0.60, dmg: 11,
+    rockRange: 1, rockCeiling: 0.25,          // what a mountain tile adds
+    cannonCost: 12,
+    cannonRange: 1,                         // extra rings over a land turret
+    cannonCeiling: 0.35,
+    cannonRate: 0.85, cannonDmg: 20,        // slower, heavier
+    alienN:     w => 5 + w * 3,
+    rampWaves:  22,                         // waves to reach the widest launch
+    zoneMin:    0.38,                       // launch cone half-angle, radians
+    zoneMax:    1.45,                       // ~83 degrees, most of a hemisphere
+    shipNear:   3.10,                       // mothership distance, sphere radii
+    shipFar:    6.60,
+    motherSize: 0.20,                       // length in sphere radii
+    shipEvery:  5,                          // waves between each extra mothership
+    shipSepMin: 0.85,                       // radians apart they try to stay
+    viperSize:  0.53,                       // length in tile inradii
+    converge:   0.60,                       // fraction of the fall spent turning
+    flameGap:   0.035,                      // seconds between exhaust puffs
+    flameLife:  0.30,                       // how long one puff lasts
+    alienHp:    w => 18 + w * 5,
+    alienSpeed: w => 0.055 + w * 0.004,       // sphere radii per second
+    spawnGap:   0.55,
+    income:     w => 5 * w,                 // five per wave cleared, plus the foundries
+    killPay:    1,
+    landDamage: 7,
+    breakTime:  20,
+    summaryTime: 5,                         // seconds the wave report lingers
+    startGold:  25,
+    aimAtBuilt: 0.6,                        // odds a pod picks an occupied tile
+    foundryCost: 20,
+    foundryYield: 5,                        // gold per wave cleared, on plain ground
+    jetCost:    10,
+    jetRing:    4,                          // patrol circle, in tile rings
+    jetSpeed:   0.60,                       // radians of arc per second
+    jetTurn:    2.2,                        // radians per second of heading change
+    jetClimb:   1.00,
+    jetCruise:  0.16,                       // idle altitude
+    jetFloor:   0.06,                       // never dives below this
+    jetCeiling: 1.05,
+    jetReach:   4.0,                        // firing range, in tile inradii
+    jetRate:    0.28,
+    jetDmg:     12,
+    jetSize:    1.5,                        // length, in tile inradii
+    shellSpeed: 1.15,                       // sphere radii per second
+    trailGap:   0.012,                      // distance between smoke puffs
+    strayLife:  2.0,                        // seconds a shell with no target keeps going
+    driftMin: 0.30, driftMax: 0.85,         // radians the drop zone walks per wave
+    autoFace: false,                        // swing the planet to face a new drop zone
+    dryWaves: 10,                           // waves that get a mostly-dry landing zone
+    dryMax:   0.25                          // most water a zone may hold during them
+  };
+
+
+  const towers = [];
+  const towerAt = new Map();     // cell index -> turret
+  const aliens = [];
+  const LOCAL_UP = new THREE.Vector3(0, 1, 0);
+
+  // ---- which tiles a turret defends. Straight breadth-first walk over the
+  //      adjacency the grid already computed, so it is correct across the
+  //      twelve pentagons without a special case.
+  function ringSet(ci, r) {
+    const seen = new Set([ci]);
+    let front = [ci];
+    for (let d = 0; d < r; d++) {
+      const next = [];
+      for (const c of front) for (const nb of tiles.neighbours[c]) {
+        if (!seen.has(nb)) { seen.add(nb); next.push(nb); }
+      }
+      front = next;
+    }
+    return seen;
+  }
+
+  // =====================================================================
+  //  Turret models
+  //
+  //  Two GLBs, embedded so the file still opens from disk with no server.
+  //  Both are stripped down hard from the source exports: 43 MB and 776k
+  //  triangles between them originally, which is not a thing you can ship
+  //  to a browser. Geometry is decimated to about 2%, normal and roughness
+  //  maps are dropped for uniform material values, textures are 512px.
+  //  Pivots are baked in: the pad's underside sits at y=0, and the gun
+  //  rotates about its own ball centre so aiming is one quaternion.
+  // =====================================================================
+  const PAD_R = 1.104;        // pad's widest radius, in model units
+  const PAD_H = 1.109;
+  const GUN_SEAT = 0.66;      // where the ball centre rides above the pad
+  const GUN_TIP = 1.459;      // mast tip, measured from the ball centre
+  const MAX_TURRETS = 512;   // instance capacity; a blanketed planet exceeds 256
+
+  function parseGLB(buffer) {
+    const u8 = new Uint8Array(buffer);
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+
+    let json = null, buf = null, off = 12;
+    while (off < u8.length) {
+      const len = dv.getUint32(off, true), type = dv.getUint32(off + 4, true);
+      const at = off + 8;
+      if (type === 0x4E4F534A) json = JSON.parse(new TextDecoder().decode(u8.subarray(at, at + len)));
+      else if (type === 0x004E4942) buf = u8.subarray(at, at + len);
+      off = at + len;
+    }
+
+    const prim = json.meshes[0].primitives[0];
+    function slice(accIdx, Type, comps) {
+      const a = json.accessors[accIdx];
+      const bv = json.bufferViews[a.bufferView];
+      const o = buf.byteOffset + (bv.byteOffset || 0) + (a.byteOffset || 0);
+      return new Type(buf.buffer, o, a.count * comps);
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(slice(prim.attributes.POSITION, Float32Array, 3), 3));
+    geo.setAttribute('normal',   new THREE.BufferAttribute(slice(prim.attributes.NORMAL, Float32Array, 3), 3));
+    geo.setAttribute('uv',       new THREE.BufferAttribute(slice(prim.attributes.TEXCOORD_0, Float32Array, 2), 2));
+    geo.setIndex(new THREE.BufferAttribute(slice(prim.indices, Uint16Array, 1), 1));
+
+    // Data URI, not a blob URL. ImageLoader sets crossOrigin on a blob URL,
+    // and from file:// the page origin is opaque, so that load fails CORS and
+    // three binds its 1x1 empty texture instead: the model comes out black.
+    // A data: URI is same-origin by definition and the loader skips the header.
+    function bytesToB64(bytes) {
+      let s = '';
+      const CH = 0x8000;                       // chunked, or fromCharCode blows the stack
+      for (let i = 0; i < bytes.length; i += CH) {
+        s += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + CH, bytes.length)));
+      }
+      return btoa(s);
+    }
+
+    function texture(texIdx, onFail) {
+      try {
+        const img = json.images[json.textures[texIdx].source];
+        const bv = json.bufferViews[img.bufferView];
+        const o = bv.byteOffset || 0;
+        const uri = 'data:' + img.mimeType + ';base64,' +
+                    bytesToB64(buf.subarray(o, o + bv.byteLength));
+        const t = new THREE.TextureLoader().load(uri, undefined, undefined, onFail);
+        t.flipY = false;                       // glTF UV convention
+        t.encoding = THREE.sRGBEncoding;
+        t.anisotropy = 4;
+        return t;
+      } catch (e) { if (onFail) onFail(e); return null; }
+    }
+
+    const m = json.materials[0], pbr = m.pbrMetallicRoughness || {};
+    // Low metalness on purpose. There is no environment map in this scene, and
+    // a metallic surface with nothing to reflect renders nearly black no matter
+    // how many lights you point at it.
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: 0.18,
+      roughness: 0.55
+    });
+    if (pbr.baseColorTexture) {
+      // if the image ever fails, fall back to a visible grey rather than black
+      mat.map = texture(pbr.baseColorTexture.index, () => {
+        mat.map = null; mat.color.setHex(0xa8b4c6); mat.needsUpdate = true;
+      });
+    }
+    if (m.emissiveTexture) {
+      mat.emissiveMap = texture(m.emissiveTexture.index, () => {
+        mat.emissiveMap = null; mat.needsUpdate = true;
+      });
+      mat.emissive = new THREE.Color(0.9, 0.9, 0.9);
+    }
+    return { geo, mat };
+  }
+
+  let padMesh = null, gunMesh = null, modelsOK = false;
+
+  const mPos = new THREE.Vector3(), mQuat = new THREE.Quaternion(),
+        mScale = new THREE.Vector3(), mMat = new THREE.Matrix4();
+
+  //  cell.center is the icosphere VERTEX the tile was built around, not the
+  //  middle of the polygon that ends up drawn there. On a Goldberg solid the
+  //  surrounding triangles are unequal, so the two differ by up to 7% of the
+  //  tile's inradius, which is exactly enough to read as "slightly off". This
+  //  returns the polygon's own centroid, plus the largest radius that still
+  //  clears every edge FROM that point, so the pad is both centred and never
+  //  overhangs into a neighbour.
+  const fitCache = new Map();
+  const fA = new THREE.Vector3(), fB = new THREE.Vector3(), fP = new THREE.Vector3();
+
+  function tileFit(ci) {
+    let f = fitCache.get(ci);
+    if (f) return f;
+    const ring = tiles.cells[ci].ring, n = ring.length;
+    const mid = new THREE.Vector3();
+    for (const p of ring) mid.add(p);
+    mid.normalize();
+
+    fA.set(0, 0, 1);
+    if (Math.abs(mid.z) > 0.9) fA.set(1, 0, 0);
+    fA.addScaledVector(mid, -fA.dot(mid)).normalize();
+    fB.crossVectors(mid, fA);
+
+    const xs = [], ys = [];
+    for (const p of ring) {
+      fP.copy(p).addScaledVector(mid, -p.dot(mid));   // flatten onto the tangent plane
+      xs.push(fP.dot(fA)); ys.push(fP.dot(fB));
+    }
+    let r = Infinity;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const ex = xs[j] - xs[i], ey = ys[j] - ys[i];
+      const len = Math.hypot(ex, ey) || 1;
+      const d = Math.abs(ex * -ys[i] - ey * -xs[i]) / len;   // centroid to that edge
+      if (d < r) r = d;
+    }
+    f = { up: mid, fit: r };
+    fitCache.set(ci, f);
+    return f;
+  }
+
+  function placeTurret(ci) {
+    if (towers.length >= MAX_TURRETS) return null;
+    const onRock = cellType[ci] === 'mountain';
+    const f = tileFit(ci);
+    const up = f.up;
+    const k = f.fit / PAD_R;                   // pad spans the tile edge to edge
+
+    const tur = {
+      ci, k, kind: 'turret',
+      up: up.clone(),
+      seat: up.clone().multiplyScalar(RADIUS + GUN_SEAT * k),
+      aimQ: new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up),
+      aimDir: up.clone(),
+      cover: ringSet(ci, BAL.range + (onRock ? BAL.rockRange : 0)),
+      ceiling: BAL.ceiling + (onRock ? BAL.rockCeiling : 0),
+      rate: BAL.rate, dmg: BAL.dmg, cool: 0
+    };
+    tur.pos = up.clone().multiplyScalar(RADIUS + (GUN_SEAT + GUN_TIP) * k);
+    towers.push(tur);
+    towerAt.set(ci, tur);
+
+    if (modelsOK) {
+      const i = towers.length - 1;
+      mPos.copy(up).multiplyScalar(RADIUS - f.fit * 0.04);          // sunk a hair
+      mQuat.setFromUnitVectors(LOCAL_UP, up);
+      mScale.setScalar(k);
+      tur.padMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
+      rebuildEmplacements();
+      writeGun(tur, i);
+    }
+    return tur;
+  }
+
+  function writeGun(t, i) {
+    if (!modelsOK) return;
+    mScale.setScalar(t.k);
+    gunMesh.setMatrixAt(i, mMat.compose(t.seat, t.aimQ, mScale));
+  }
+
+  function clearTurrets() {
+    towers.length = 0;
+    towerAt.clear();
+    if (modelsOK) { padMesh.count = 0; gunMesh.count = 0; }
+    if (platMesh) { platMesh.count = 0; coreMesh.count = 0; }
+  }
+
+  // =====================================================================
+  //  FIGHTERS
+  //
+  //  A turret is a gun bolted to one tile: it reaches everything in its
+  //  ring but only from where it stands. A fighter owns the SAME circle
+  //  and can be anywhere inside it, so it never has a bad angle, but it
+  //  can only be in one place at a time and has to fly there first. That
+  //  trade is the whole point of the unit: turrets buy coverage, fighters
+  //  buy reach, and neither one substitutes for the other.
+  // =====================================================================
+  const fighters = [];
+  const fighterAt = new Map();
+  const JET_LEN = 1.898;
+
+  let jetMesh = null;
+
+  const fA1 = new THREE.Vector3(), fA2 = new THREE.Vector3(), fWant = new THREE.Vector3(),
+        fAxis = new THREE.Vector3(), fQ = new THREE.Quaternion(), fPos = new THREE.Vector3(),
+        fX = new THREE.Vector3(), fY = new THREE.Vector3(), fZ = new THREE.Vector3(),
+        fBasis = new THREE.Matrix4(), fRoll = new THREE.Quaternion();
+
+  function placeFighter(ci) {
+    if (fighters.length >= MAX_TURRETS) return null;
+    const f0 = tileFit(ci);
+    const home = f0.up.clone();
+    const cover = ringSet(ci, BAL.jetRing);
+
+    // the patrol circle is measured from the cover set itself, so it stays
+    // honest when the grid size changes instead of assuming a tile pitch
+    let radius = 0;
+    for (const c of cover) radius = Math.max(radius, home.angleTo(tiles.cells[c].center));
+
+    // a tangent basis at home, used for the idle orbit
+    const e1 = new THREE.Vector3(0, 0, 1);
+    if (Math.abs(home.z) > 0.9) e1.set(1, 0, 0);
+    e1.addScaledVector(home, -e1.dot(home)).normalize();
+    const e2 = new THREE.Vector3().crossVectors(home, e1);
+
+    const start = home.clone().multiplyScalar(Math.cos(radius * 0.7))
+                     .addScaledVector(e1, Math.sin(radius * 0.7)).normalize();
+    const head = new THREE.Vector3().crossVectors(home, start).normalize();
+
+    const jf = {
+      ci, home, cover, radius, e1, e2,
+      dir: start, head,
+      alt: BAL.jetCruise,
+      k: tiles.meanInr * BAL.jetSize / JET_LEN,
+      ceiling: BAL.jetCeiling,
+      cool: 0, bank: 0, emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
+    };
+    fighters.push(jf);
+    fighterAt.set(ci, jf);
+    if (jetMesh) jetMesh.count = fighters.length;
+    return jf;
+  }
+
+  function clearFighters() {
+    fighters.length = 0;
+    fighterAt.clear();
+    if (jetMesh) jetMesh.count = 0;
+  }
+
+  function updateFighters(dt) {
+    for (let i = 0; i < fighters.length; i++) {
+      const f = fighters[i];
+      f.cool -= dt;
+
+      let best = null;
+      for (const a of aliens) {
+        if (!a.alive || a.alt > f.ceiling) continue;
+        if (!f.cover.has(a.ci)) continue;
+        if (a.hp - a.incoming <= 0) continue;
+        if (!best || a.alt < best.alt) best = a;
+      }
+
+      let wantAlt;
+      if (best) {
+        fWant.copy(best.dir);
+        wantAlt = Math.max(best.alt, BAL.jetFloor);
+      } else {
+        // idle: circle the home tile so the unit reads as patrolling
+        f.phase += dt * BAL.jetSpeed / Math.max(f.radius * 0.7, 1e-3);
+        const rr = f.radius * 0.7;
+        fWant.copy(f.home).multiplyScalar(Math.cos(rr))
+             .addScaledVector(f.e1, Math.sin(rr) * Math.cos(f.phase))
+             .addScaledVector(f.e2, Math.sin(rr) * Math.sin(f.phase)).normalize();
+        wantAlt = BAL.jetCruise;
+      }
+
+      // steer: turn the heading toward the bearing of the wanted point,
+      // capped by a turn rate so it banks around instead of snapping
+      fA1.copy(fWant).addScaledVector(f.dir, -fWant.dot(f.dir));
+      let turn = 0;
+      if (fA1.lengthSq() > 1e-10) {
+        fA1.normalize();
+        const ang = f.head.angleTo(fA1);
+        const lim = BAL.jetTurn * dt;
+        turn = Math.min(ang, lim);
+        if (ang > 1e-6) {
+          fA2.crossVectors(f.head, fA1);
+          const sign = fA2.dot(f.dir) >= 0 ? 1 : -1;
+          fQ.setFromAxisAngle(f.dir, sign * turn);
+          f.head.applyQuaternion(fQ);
+          f.head.addScaledVector(f.dir, -f.head.dot(f.dir)).normalize();
+          turn *= sign;
+        }
+      }
+      f.bank += (THREE.MathUtils.clamp(turn / Math.max(dt, 1e-4) * 0.30, -1.0, 1.0) - f.bank)
+                * Math.min(1, dt * 4);
+
+      // fly forward along the great circle the heading points down
+      fAxis.crossVectors(f.dir, f.head);
+      if (fAxis.lengthSq() > 1e-12) {
+        fAxis.normalize();
+        fQ.setFromAxisAngle(fAxis, BAL.jetSpeed * dt);
+        f.dir.applyQuaternion(fQ).normalize();
+        f.head.applyQuaternion(fQ).normalize();
+      }
+
+      // it may go anywhere inside its circle and nowhere outside it
+      const away = f.home.angleTo(f.dir);
+      if (away > f.radius) {
+        fAxis.crossVectors(f.dir, f.home);
+        if (fAxis.lengthSq() > 1e-12) {
+          fAxis.normalize();
+          fQ.setFromAxisAngle(fAxis, away - f.radius);
+          f.dir.applyQuaternion(fQ).normalize();
+          f.head.applyQuaternion(fQ).normalize();
+        }
+      }
+
+      const dAlt = wantAlt - f.alt;
+      f.alt += THREE.MathUtils.clamp(dAlt, -BAL.jetClimb * dt, BAL.jetClimb * dt);
+
+      // guns are short ranged on purpose: it has to actually get there
+      fPos.copy(f.dir).multiplyScalar(RADIUS + f.alt);
+      if (best && f.cool <= 0) {
+        const reach = BAL.jetReach * tiles.meanInr;
+        if (fPos.distanceTo(posOf(best)) < reach) {
+          f.cool = BAL.jetRate;
+          fA2.copy(alienPos).sub(fPos).normalize();
+          muzzle.copy(f.head).multiplyScalar(JET_LEN * 0.5 * f.k).add(fPos);
+          fireShell(muzzle, fA2, best, BAL.jetDmg);
+        }
+      }
+
+      if (jetMesh) {
+        fZ.copy(f.head).multiplyScalar(-1);        // model nose is -Z
+        fY.copy(f.dir).addScaledVector(fZ, -f.dir.dot(fZ)).normalize();
+        fX.crossVectors(fY, fZ).normalize();
+        fBasis.makeBasis(fX, fY, fZ);
+        fQ.setFromRotationMatrix(fBasis);
+        fRoll.setFromAxisAngle(fZ, -f.bank);
+        fQ.premultiply(fRoll);
+        mScale.setScalar(f.k);
+        jetMesh.setMatrixAt(i, mMat.compose(fPos, fQ, mScale));
+
+        f.emit += dt;
+        while (f.emit >= BAL.flameGap) {
+          f.emit -= BAL.flameGap;
+          flame(fPos, fZ, JET_LEN * 0.48 * f.k, tiles.meanInr * 0.16, BAL.flameLife);
+        }
+      }
+    }
+    if (jetMesh && fighters.length) jetMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  // =====================================================================
+  //  FOUNDRIES
+  //
+  //  The economy building, and the first thing in the game that makes
+  //  terrain mean something. A foundry pays out continuously, scaled by
+  //  what it is standing on, and it occupies a tile that could have held a
+  //  gun instead. That is the whole decision: every foundry is a hole in
+  //  your defence that pays for more defence somewhere else.
+  // =====================================================================
+  const FOUNDRY_R = 1.242;                   // model's widest footprint radius
+  const foundries = [];
+  const foundryAt = new Map();
+
+  const ORE = {                              // gold per wave, by what it stands on
+    mountain: 8,
+    desert:   7,
+    plain:    5,
+    forest:   4,
+    swamp:    3
+  };
+
+  let foundryMesh = null;
+
+  const foQ = new THREE.Quaternion(), foSpin = new THREE.Quaternion();
+
+  function placeFoundry(ci) {
+    if (foundries.length >= MAX_TURRETS) return null;
+    const f = tileFit(ci);
+    const rate = ORE[cellType[ci]] || BAL.foundryYield;
+    const fo = { ci, rate, up: f.up.clone(), mat: new THREE.Matrix4() };
+    foundries.push(fo);
+    foundryAt.set(ci, fo);
+
+    if (foundryMesh) {
+      const i = foundries.length - 1;
+      const k = f.fit / FOUNDRY_R;
+      mPos.copy(f.up).multiplyScalar(RADIUS - f.fit * 0.05);
+      foQ.setFromUnitVectors(LOCAL_UP, f.up);
+      foSpin.setFromAxisAngle(LOCAL_UP, Math.random() * Math.PI * 2);  // vary the look
+      foQ.multiply(foSpin);
+      mScale.setScalar(k);
+      fo.mat.compose(mPos, foQ, mScale);
+      foundryMesh.setMatrixAt(i, fo.mat);
+      foundryMesh.count = foundries.length;
+      foundryMesh.instanceMatrix.needsUpdate = true;
+    }
+    return fo;
+  }
+
+  function clearFoundries() {
+    foundries.length = 0;
+    foundryAt.clear();
+    if (foundryMesh) foundryMesh.count = 0;
+  }
+
+  function foundryIncome() {
+    let g = 0;
+    for (let i = 0; i < foundries.length; i++) g += foundries[i].rate;
+    return g;
+  }
+
+  //  Anything that touches down flattens whatever was on that tile. Without
+  //  this a foundry is a free win: the drop zone is a couple of dozen tiles
+  //  out of hundreds, so you could pave the far side of the planet and never
+  //  pay for it. Now the drifting front eventually walks through your
+  //  industry, and where you put the money is a real bet.
+  function demolish(ci) {
+    if (foundryAt.has(ci)) {
+      const i = foundries.indexOf(foundryAt.get(ci));
+      foundries.splice(i, 1);
+      foundryAt.delete(ci);
+      if (foundryMesh) {
+        for (let n = 0; n < foundries.length; n++) foundryMesh.setMatrixAt(n, foundries[n].mat);
+        foundryMesh.count = foundries.length;
+        foundryMesh.instanceMatrix.needsUpdate = true;
+      }
+      return 'FOUNDRY LOST';
+    }
+    if (towerAt.has(ci)) {
+      const i = towers.indexOf(towerAt.get(ci));
+      const kind = towerAt.get(ci).kind;
+      towers.splice(i, 1);
+      towerAt.delete(ci);
+      rebuildEmplacements();
+      return kind === 'cannon' ? 'SEA CANNON LOST' : 'TURRET LOST';
+    }
+    if (fighterAt.has(ci)) {
+      const i = fighters.indexOf(fighterAt.get(ci));
+      fighters.splice(i, 1);
+      fighterAt.delete(ci);
+      if (jetMesh) jetMesh.count = fighters.length;
+      return 'FIGHTER LOST';
+    }
+    return null;
+  }
+
+  // =====================================================================
+  //  THE MOTHERSHIP
+  //
+  //  Difficulty is a distance now. The juggernaut warps in, sits off the
+  //  planet, and the break timer is the countdown to it opening its bays.
+  //  Early on it comes in close and can only throw vipers at a small cap of
+  //  ground. Later it launches from much further out, and the cone it can
+  //  reach widens until it covers most of a hemisphere. Nothing about the
+  //  turrets changes; the map they have to cover does.
+  // =====================================================================
+  //  From wave 5 a second juggernaut arrives, another every five after
+  //  that. They pick separate bearings, so late waves are not one front you
+  //  can stand in but several you have to choose between.
+  const MAX_SHIPS = 8;
+  const motherMeshes = [];
+
+  function shipCountFor(w) { return Math.min(MAX_SHIPS, 1 + Math.floor(w / BAL.shipEvery)); }
+
+  const MOTHER_LEN = 1.899;
+  const moX = new THREE.Vector3(), moY = new THREE.Vector3(), moZ = new THREE.Vector3(),
+        moBasis = new THREE.Matrix4(), moQ = new THREE.Quaternion();
+
+  // progress from the first wave to the widest launch, 0..1
+  function ramp(w) {
+    return Math.min(1, Math.max(0, (w - 1) / Math.max(1, BAL.rampWaves - 1)));
+  }
+  function zoneAngleFor(w) { const t = ramp(w); return BAL.zoneMin + (BAL.zoneMax - BAL.zoneMin) * t; }
+  function shipDistFor(w)  { const t = ramp(w); return BAL.shipNear + (BAL.shipFar - BAL.shipNear) * t; }
+
+  function placeMothers() {
+    for (let i = 0; i < MAX_SHIPS; i++) {
+      const m = motherMeshes[i];
+      if (!m) continue;
+      const s = G.ships[i];
+      if (!s) { m.visible = false; continue; }
+      m.position.copy(s.bearing).multiplyScalar(s.dist);
+      // nose down the bearing, toward the planet it is about to seed
+      moZ.copy(s.bearing);                     // model nose is -Z, so +Z is up-bearing
+      moY.set(0, 1, 0);
+      if (Math.abs(moY.dot(moZ)) > 0.9) moY.set(1, 0, 0);
+      moY.addScaledVector(moZ, -moY.dot(moZ)).normalize();
+      moX.crossVectors(moY, moZ).normalize();
+      moBasis.makeBasis(moX, moY, moZ);
+      m.quaternion.setFromRotationMatrix(moBasis);
+      m.scale.setScalar(BAL.motherSize / MOTHER_LEN);
+      m.visible = true;
+    }
+  }
+
+  function hideMothers() {
+    for (const m of motherMeshes) m.visible = false;
+    for (const r of zoneRings) r.visible = false;
+  }
+
+  // =====================================================================
+  //  SEA CANNON
+  //
+  //  Three parts stacked on one water hex: a pontoon deck floating at the
+  //  water line, a round weapons mount seated on the deck, and the same gun
+  //  the land turret uses dropped into the mount's socket. Water used to be
+  //  dead ground you could only fly over; this is the thing you build on it.
+  // =====================================================================
+  const PLAT_R = 1.236;        // pontoon deck, widest radius in model units
+  const PLAT_DECK = 0.60;      // clear deck height at the middle of it
+  const CORE_R = 1.014;        // weapons mount radius
+  const CORE_FIT = 0.42;       // how much of the deck the mount is allowed
+  const CORE_SEAT = 0.70;      // ball centre, in mount units above its base
+  const CORE_GUN = 0.55;       // gun scale relative to the mount
+
+  let platMesh = null, coreMesh = null;
+
+  function placeCannon(ci) {
+    if (towers.length >= MAX_TURRETS) return null;
+    const f = tileFit(ci);
+    const up = f.up;
+    const kp = f.fit / PLAT_R;                       // deck spans the hex
+    const kc = kp * (PLAT_R * CORE_FIT) / CORE_R;    // mount fits the clear deck
+    const kg = kc * CORE_GUN;
+
+    // the deck floats at the water line, which sits below the land shelf
+    const base = RADIUS - WATER_DROP;
+    const deckY = base + PLAT_DECK * kp;
+    const seatY = deckY + CORE_SEAT * kc;
+
+    const tur = {
+      ci, kind: 'cannon', k: kg,
+      up: up.clone(),
+      seat: up.clone().multiplyScalar(seatY),
+      aimQ: new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up),
+      aimDir: up.clone(),
+      pos: up.clone().multiplyScalar(seatY + GUN_TIP * kg),
+      cover: ringSet(ci, BAL.range + BAL.cannonRange),
+      ceiling: BAL.ceiling + BAL.cannonCeiling,
+      rate: BAL.cannonRate, dmg: BAL.cannonDmg, cool: 0
+    };
+
+    // both hulls share the tile's axis, so the stack cannot drift apart
+    mQuat.setFromUnitVectors(LOCAL_UP, up);
+    mPos.copy(up).multiplyScalar(base);
+    mScale.setScalar(kp);
+    tur.platMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
+    mPos.copy(up).multiplyScalar(deckY);
+    mScale.setScalar(kc);
+    tur.coreMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
+
+    towers.push(tur);
+    towerAt.set(ci, tur);
+    rebuildEmplacements();
+    writeGun(tur, towers.length - 1);   // or it renders at the origin until the first shot
+    return tur;
+  }
+
+  //  Turrets and cannons live in one list so targeting, firing and
+  //  demolition need no special cases, but they draw from different meshes.
+  //  Slots are reassigned from scratch whenever the list changes, which is
+  //  rare and keeps every index honest after a removal.
+  function rebuildEmplacements() {
+    let pads = 0, plats = 0;
+    for (const t of towers) {
+      if (t.kind === 'cannon') {
+        if (platMesh) { platMesh.setMatrixAt(plats, t.platMat); coreMesh.setMatrixAt(plats, t.coreMat); }
+        plats++;
+      } else {
+        if (modelsOK) padMesh.setMatrixAt(pads, t.padMat);
+        pads++;
+      }
+    }
+    if (modelsOK) { padMesh.count = pads; padMesh.instanceMatrix.needsUpdate = true; }
+    if (platMesh) {
+      platMesh.count = plats; coreMesh.count = plats;
+      platMesh.instanceMatrix.needsUpdate = true;
+      coreMesh.instanceMatrix.needsUpdate = true;
+    }
+    if (modelsOK) gunMesh.count = towers.length;
+  }
+
+  // ---------- descending drops ----------
+  const MAX_ALIENS = 400;
+  const VIPER_LEN = 1.884;
+  const alienMesh = new THREE.InstancedMesh(
+    new THREE.OctahedronGeometry(1, 0),        // placeholder until the viper lands
+    new THREE.MeshStandardMaterial({ color: 0xb45cff, emissive: 0x3a0d5c }),
+    MAX_ALIENS
+  );
+  alienMesh.count = 0;
+  alienMesh.frustumCulled = false;
+  world.add(alienMesh);
+  const dummy = new THREE.Object3D();
+
+  // ---------- shells and smoke ----------
+  //
+  //  Shells are real objects with flight time, not instant hitscan. That
+  //  introduces the classic overkill problem: three turrets all fire at the
+  //  same pod, it dies to the first shell and the other two are wasted. So
+  //  damage is RESERVED at the muzzle and released on impact, and targeting
+  //  ignores anything already dead on paper.
+  const BULLET_MAX = 256;
+  const bullets = [];
+
+  const bulletMesh = new THREE.InstancedMesh(
+    new THREE.OctahedronGeometry(1, 0),
+    new THREE.MeshBasicMaterial({ color: 0xffd9a0 }),
+    BULLET_MAX
+  );
+  bulletMesh.count = 0;
+  bulletMesh.frustumCulled = false;
+  world.add(bulletMesh);
+
+  // Smoke is one Points object with a per-particle size and alpha, so a few
+  // thousand puffs cost one draw call. PointsMaterial cannot fade per
+  // particle in this build of three, hence the small shader.
+  const SMOKE_MAX = 6000;    // shared by shell smoke and every engine flame
+  const sPos = new Float32Array(SMOKE_MAX * 3);
+  const sCol = new Float32Array(SMOKE_MAX * 3);
+  const sSize = new Float32Array(SMOKE_MAX);
+  const sAlpha = new Float32Array(SMOKE_MAX);
+  const sLife = new Float32Array(SMOKE_MAX);
+  const sMax = new Float32Array(SMOKE_MAX);
+  const sS0 = new Float32Array(SMOKE_MAX);
+  const sS1 = new Float32Array(SMOKE_MAX);
+  const sA0 = new Float32Array(SMOKE_MAX);
+  let sCount = 0;
+
+  const smokeGeo = new THREE.BufferGeometry();
+  smokeGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+  smokeGeo.setAttribute('pcolor', new THREE.BufferAttribute(sCol, 3));
+  smokeGeo.setAttribute('psize', new THREE.BufferAttribute(sSize, 1));
+  smokeGeo.setAttribute('palpha', new THREE.BufferAttribute(sAlpha, 1));
+  smokeGeo.setDrawRange(0, 0);
+
+  const smokeMat = new THREE.ShaderMaterial({
+    uniforms: { uScale: { value: window.innerHeight * 0.5 } },
+    transparent: true,
+    depthWrite: false,
+    vertexShader: `
+      attribute vec3 pcolor;
+      attribute float psize;
+      attribute float palpha;
+      varying vec3 vCol;
+      varying float vAlpha;
+      uniform float uScale;
+      void main() {
+        vCol = pcolor;
+        vAlpha = palpha;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = psize * (uScale / -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      varying vec3 vCol;
+      varying float vAlpha;
+      void main() {
+        vec2 c = gl_PointCoord - 0.5;
+        float d = dot(c, c);
+        if (d > 0.25) discard;
+        gl_FragColor = vec4(vCol, vAlpha * (1.0 - smoothstep(0.02, 0.25, d)));
+      }`
+  });
+
+  const smoke = new THREE.Points(smokeGeo, smokeMat);
+  smoke.frustumCulled = false;
+  smoke.renderOrder = 2;
+  world.add(smoke);
+
+  function puff(p, s0, s1, life, r, g, b, a) {
+    const i = sCount < SMOKE_MAX ? sCount++ : (Math.random() * SMOKE_MAX) | 0;
+    sPos[i*3] = p.x; sPos[i*3+1] = p.y; sPos[i*3+2] = p.z;
+    sCol[i*3] = r; sCol[i*3+1] = g; sCol[i*3+2] = b;
+    sS0[i] = s0; sS1[i] = s1; sA0[i] = a;
+    sLife[i] = 0; sMax[i] = life;
+  }
+
+  function swapSmoke(i, j) {
+    for (let k = 0; k < 3; k++) {
+      sPos[i*3+k] = sPos[j*3+k];
+      sCol[i*3+k] = sCol[j*3+k];
+    }
+    sS0[i] = sS0[j]; sS1[i] = sS1[j]; sA0[i] = sA0[j];
+    sLife[i] = sLife[j]; sMax[i] = sMax[j];
+  }
+
+  function updateSmoke(dt) {
+    for (let i = 0; i < sCount; i++) {
+      sLife[i] += dt;
+      if (sLife[i] >= sMax[i]) { swapSmoke(i, --sCount); i--; continue; }
+      const t = sLife[i] / sMax[i];
+      sSize[i] = sS0[i] + (sS1[i] - sS0[i]) * t;   // puffs expand as they age
+      sAlpha[i] = sA0[i] * (1 - t) * (1 - t);
+    }
+    smokeGeo.setDrawRange(0, sCount);
+    smokeGeo.attributes.position.needsUpdate = true;
+    smokeGeo.attributes.pcolor.needsUpdate = true;
+    smokeGeo.attributes.psize.needsUpdate = true;
+    smokeGeo.attributes.palpha.needsUpdate = true;
+  }
+
+  const flameAt = new THREE.Vector3();
+
+  //  back is the unit vector out of the tail. Puffs are laid on a fixed
+  //  clock rather than per frame so the trail does not thin out when the
+  //  frame rate dips, and each one is tinted between yellow and red so the
+  //  plume flickers instead of reading as a solid bar.
+  function flame(pos, back, span, size, life) {
+    flameAt.copy(back).multiplyScalar(span).add(pos);
+    const heat = Math.random();
+    puff(flameAt,
+         size * (0.7 + Math.random() * 0.5),
+         size * (1.6 + Math.random() * 0.8),
+         life * (0.7 + Math.random() * 0.6),
+         1.0, 0.55 + heat * 0.35, 0.15 + heat * 0.35,
+         0.85);
+  }
+
+  const bDir = new THREE.Vector3(), bStep = new THREE.Vector3(), bTgt = new THREE.Vector3();
+
+  function fireShell(from, dir, target, dmg) {
+    if (bullets.length >= BULLET_MAX) return;
+    target.incoming += dmg;                        // reserved, not yet dealt
+    bullets.push({
+      pos: from.clone(),
+      vel: dir.clone().multiplyScalar(BAL.shellSpeed),
+      target, dmg, life: 0, emit: 0, spent: false
+    });
+    puff(from, tiles.meanInr * 0.30, tiles.meanInr * 1.1, 0.5, 1.0, 0.82, 0.5, 0.75);
+  }
+
+  function updateBullets(dt) {
+    const trailGap = BAL.trailGap, scale = tiles.meanInr;
+    let live = 0;
+    for (let i = 0; i < bullets.length; i++) {
+      const b = bullets[i];
+      b.life += dt;
+
+      if (!b.spent && b.target.alive) {
+        // gentle homing: it curves onto a falling target instead of leading it
+        bTgt.copy(b.target.dir).multiplyScalar(RADIUS + b.target.alt);
+        bDir.subVectors(bTgt, b.pos);
+        const dist = bDir.length();
+        if (dist <= BAL.shellSpeed * dt + scale * 0.25) {
+          b.target.hp -= b.dmg;
+          b.target.incoming -= b.dmg;
+          b.spent = true;
+          for (let k = 0; k < 5; k++) {
+            puff(bTgt, scale * 0.25, scale * 1.6, 0.55 + Math.random() * 0.3,
+                 1.0, 0.72, 0.45, 0.8);
+          }
+          if (b.target.hp <= 0 && b.target.alive) {
+            b.target.alive = false;
+            G.gold += BAL.killPay;
+            for (let k = 0; k < 10; k++) {
+              puff(bTgt, scale * 0.4, scale * 2.6, 0.8 + Math.random() * 0.5,
+                   0.72, 0.45, 0.95, 0.7);
+            }
+          }
+          continue;                                 // dropped this frame
+        }
+        bDir.divideScalar(dist);
+        b.vel.lerp(bDir.multiplyScalar(BAL.shellSpeed), 0.25);
+      } else if (!b.spent) {
+        b.target.incoming -= b.dmg;                 // target died first
+        b.spent = true;
+      }
+
+      if (b.spent && b.life > BAL.strayLife) continue;   // a miss flies on, then fizzles
+
+      bStep.copy(b.vel).multiplyScalar(dt);
+      b.pos.add(bStep);
+
+      // lay the trail at a fixed spacing so speed does not change its density
+      b.emit += bStep.length();
+      while (b.emit >= trailGap) {
+        b.emit -= trailGap;
+        puff(b.pos, scale * 0.16, scale * 0.85, 0.9 + Math.random() * 0.4,
+             0.62, 0.62, 0.66, 0.5);
+      }
+
+      bullets[live++] = b;
+    }
+    bullets.length = live;
+
+    for (let i = 0; i < live; i++) {
+      dummy.position.copy(bullets[i].pos);
+      dummy.quaternion.set(0, 0, 0, 1);
+      dummy.scale.setScalar(scale * 0.13);
+      dummy.updateMatrix();
+      bulletMesh.setMatrixAt(i, dummy.matrix);
+    }
+    bulletMesh.count = live;
+    bulletMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  const alienPos = new THREE.Vector3(), aim = new THREE.Vector3(),
+        muzzle = new THREE.Vector3();
+  function posOf(a) { return alienPos.copy(a.dir).multiplyScalar(RADIUS + a.alt); }
+
+  // ---------- waves ----------
+  // The drop picks a bearing in space and lands a cluster around it, so a
+  // wave is a place you can defend rather than noise sprayed over the globe.
+  const qWorldGoal = new THREE.Quaternion();
+  let worldTween = false;
+
+  function faceBearing(bearing) {
+    // Off by default: the planet holding still is worth more than the
+    // convenience of being shown the next zone, since the swing fires the
+    // moment a wave ends and yanks the view out from under you.
+    if (!BAL.autoFace) return;
+    camera.updateMatrixWorld();
+    const front = camera.position.clone().normalize();
+    qWorldGoal.setFromUnitVectors(bearing, front);
+    worldTween = true;
+  }
+
+
+
+  // A drop zone the player only learns about when it starts is not a puzzle,
+  // it is a coin toss: turrets are static and a wave is over in twenty
+  // seconds. So the NEXT bearing is chosen the moment the last wave ends and
+  // drawn on the ground, and the break is the time you get to answer it.
+  const ZONE_SEG = 96;
+  const zoneRings = [];
+  const zoneMat = new THREE.LineBasicMaterial({ color: 0xff5f56, transparent: true, opacity: 0.9 });
+  for (let i = 0; i < MAX_SHIPS; i++) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ZONE_SEG * 3), 3));
+    const r = new THREE.LineLoop(g, zoneMat);
+    r.frustumCulled = false;
+    r.visible = false;
+    world.add(r);
+    zoneRings.push(r);
+  }
+
+  // The bearing WALKS, it does not teleport. A fresh random point on the
+  // sphere every wave made the run a lottery: two zones near each other and
+  // your existing turrets carry, two zones apart and you owe a whole new
+  // defence you cannot afford. Simulated over hundreds of runs that swamped
+  // every other number in the game. Drifting the bearing turns the same
+  // randomness into a front line that walks around the planet, so the
+  // question becomes how far you extend rather than how lucky you were.
+  const driftAxis = new THREE.Vector3(), qDrift = new THREE.Quaternion();
+
+  //  Early waves must not open on an ocean. A zone that is mostly water has
+  //  almost nowhere to build, so the wave is decided before you touch it,
+  //  and losing to the map roll is not the same as losing to the game.
+  function waterFrac(bearing, ang) {
+    const c = Math.cos(ang);
+    let n = 0, w = 0;
+    for (let ci = 0; ci < tiles.cells.length; ci++) {
+      if (tiles.cells[ci].center.dot(bearing) > c) { n++; if (cellType[ci] === 'lake') w++; }
+    }
+    return n ? w / n : 0;
+  }
+
+  const randDir = () => {
+    const b = new THREE.Vector3(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
+    return b.lengthSq() < 1e-6 ? b.set(0, 1, 0) : b.normalize();
+  };
+
+  // how far the nearest OTHER ship is. Used to keep them off each other:
+  // two juggernauts stacked in the same sky is one front, not two.
+  function clearance(v, ships, skip) {
+    let d = Math.PI;
+    for (let i = 0; i < ships.length; i++) {
+      if (i === skip) continue;
+      d = Math.min(d, v.angleTo(ships[i].bearing));
+    }
+    return d;
+  }
+
+  function driftFrom(bearing) {
+    driftAxis.set(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
+    driftAxis.addScaledVector(bearing, -driftAxis.dot(bearing));
+    if (driftAxis.lengthSq() < 1e-8) driftAxis.set(1, 0, 0);
+    driftAxis.normalize();
+    const step = BAL.driftMin + Math.random() * (BAL.driftMax - BAL.driftMin);
+    qDrift.setFromAxisAngle(driftAxis, step);
+    return bearing.clone().applyQuaternion(qDrift).normalize();
+  }
+
+  function pickBearing() {
+    // everything about the coming wave is decided here, so the break shows
+    // you the real thing rather than a placeholder
+    const w = G.wave + 1;
+    G.zoneAng = zoneAngleFor(w);
+    G.shipDist = shipDistFor(w);
+    const want = shipCountFor(w);
+    const sep = Math.min(2.2, Math.max(BAL.shipSepMin, G.zoneAng * 1.15));
+
+    // during the dry window a candidate must clear the water bar as well as
+    // its neighbours; the best dry option wins, and if nothing is dry we fall
+    // back to the roomiest rather than refusing to place the ship
+    const dry = w <= BAL.dryWaves;
+    const passes = v => !dry || waterFrac(v, G.zoneAng) <= BAL.dryMax;
+
+    // existing ships walk, but each picks the drift that keeps it clearest
+    // of its neighbours, so they spread instead of converging
+    for (let i = 0; i < G.ships.length; i++) {
+      const s = G.ships[i];
+      let best = null, bestD = -1, dryBest = null, dryBestD = -1;
+      for (let t = 0; t < (dry ? 24 : 8); t++) {
+        const cand = driftFrom(s.bearing);
+        const d = clearance(cand, G.ships, i);
+        if (d > bestD) { bestD = d; best = cand; }
+        if (passes(cand)) {
+          if (d > dryBestD) { dryBestD = d; dryBest = cand; }
+          if (d >= sep) break;
+        }
+      }
+      s.bearing.copy(dryBest || best);
+    }
+
+    // new arrivals warp in as far from everything as a short search can find
+    while (G.ships.length < want) {
+      let best = null, bestD = -1, dryBest = null, dryBestD = -1;
+      for (let t = 0; t < (dry ? 96 : 64); t++) {
+        const cand = randDir();
+        const d = clearance(cand, G.ships, -1);
+        if (d > bestD) { bestD = d; best = cand; }
+        if (passes(cand)) {
+          if (d > dryBestD) { dryBestD = d; dryBest = cand; }
+          if (d >= sep) break;
+        }
+      }
+      G.ships.push({ bearing: dryBest || best, dist: G.shipDist, ang: G.zoneAng });
+    }
+    G.ships.length = Math.min(G.ships.length, want);
+
+    for (let i = 0; i < G.ships.length; i++) {
+      G.ships[i].dist = G.shipDist;
+      G.ships[i].ang = G.zoneAng;
+      drawZone(i, G.ships[i].bearing, G.zoneAng);
+    }
+    for (let i = G.ships.length; i < MAX_SHIPS; i++) zoneRings[i].visible = false;
+
+    G.bearing = G.ships[0].bearing;      // the sim and the camera still want one
+    placeMothers();
+    faceBearing(meanBearing());
+  }
+
+  // the camera swings to the middle of the fleet, which is the best single
+  // view when there is more than one of them
+  const meanV = new THREE.Vector3();
+  function meanBearing() {
+    meanV.set(0, 0, 0);
+    for (const s of G.ships) meanV.add(s.bearing);
+    return meanV.lengthSq() < 0.04 ? G.ships[0].bearing : meanV.normalize();
+  }
+
+  const zA = new THREE.Vector3(), zB = new THREE.Vector3(), zP = new THREE.Vector3();
+  function drawZone(idx, bearing, ang) {
+    const ring = zoneRings[idx];
+    if (!ring) return;
+    zA.set(0, 0, 1);
+    if (Math.abs(bearing.z) > 0.9) zA.set(1, 0, 0);
+    zA.addScaledVector(bearing, -zA.dot(bearing)).normalize();
+    zB.crossVectors(bearing, zA);
+    const arr = ring.geometry.attributes.position.array;
+    const c = Math.cos(ang), s = Math.sin(ang);
+    for (let i = 0; i < ZONE_SEG; i++) {
+      const a = (i / ZONE_SEG) * Math.PI * 2;
+      zP.copy(bearing).multiplyScalar(c)
+        .addScaledVector(zA, s * Math.cos(a))
+        .addScaledVector(zB, s * Math.sin(a))
+        .setLength(RADIUS * 1.008);
+      arr[i*3] = zP.x; arr[i*3+1] = zP.y; arr[i*3+2] = zP.z;
+    }
+    ring.geometry.attributes.position.needsUpdate = true;
+    ring.visible = true;
+  }
+
+  function startWave() {
+    G.wave++;
+    G.inWave = true;
+
+    const n = BAL.alienN(G.wave);
+    const hp = BAL.alienHp(G.wave);
+    const speed = BAL.alienSpeed(G.wave);
+    const fleet = G.ships.length;
+
+    G.queue = [];
+    for (let si = 0; si < fleet; si++) {
+      const ship = G.ships[si];
+      const spread = Math.cos(ship.ang);
+      const cand = [];
+      for (let ci = 0; ci < tiles.cells.length; ci++) {
+        if (tiles.cells[ci].center.dot(ship.bearing) > spread) cand.push(ci);
+      }
+      if (!cand.length) cand.push(0);
+
+      // they aim for what you built, not empty ground, so the telegraph is a
+      // warning about your own stuff rather than an abstract patch of dirt
+      const built = cand.filter(ci => towerAt.has(ci) || fighterAt.has(ci) || foundryAt.has(ci));
+
+      // the wave splits across the fleet; the remainder goes to the first ships
+      const share = Math.floor(n / fleet) + (si < n % fleet ? 1 : 0);
+      for (let i = 0; i < share; i++) {
+        const pool = (built.length && Math.random() < BAL.aimAtBuilt) ? built : cand;
+        G.queue.push({ ci: pool[(Math.random() * pool.length) | 0], hp, speed, ship });
+      }
+    }
+    // interleave, or ship one empties its bays before ship two starts
+    for (let i = G.queue.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const t = G.queue[i]; G.queue[i] = G.queue[j]; G.queue[j] = t;
+    }
+    G.spawnTimer = 0;
+    G.landed = 0;
+    hideSummary();                   // a called wave clears the last report
+    faceBearing(meanBearing());
+    say('WAVE ' + G.wave + ' INBOUND');
+  }
+
+  function spawnOne(spec) {
+    if (aliens.length >= MAX_ALIENS) return;
+    const ship = spec.ship || G.ships[0];
+    const tgt = tiles.cells[spec.ci].center;
+    const alt = ship.dist - RADIUS;             // it leaves from the ship itself
+    const sweep = ship.bearing.angleTo(tgt);
+    const fall = alt / spec.speed;              // seconds to the ground
+    aliens.push({
+      ci: spec.ci,
+      dir: ship.bearing.clone(),                // starts under its own ship
+      tgt: tgt.clone(),
+      turn: sweep / Math.max(fall * BAL.converge, 0.001),   // arrives over its
+      alt,                                                  // column part way down
+      pos: new THREE.Vector3(),
+      prev: new THREE.Vector3(),
+      hp: spec.hp,
+      incoming: 0,
+      speed: spec.speed,
+      alive: true
+    });
+  }
+
+  function endWave() {
+    G.inWave = false;
+    G.breakLeft = BAL.breakTime;
+    const pay = BAL.income(G.wave) + foundryIncome();
+    G.gold += pay;
+    showSummary(G.wave, G.landed, pay);
+    pickBearing();                   // you get the next one straight away
+  }
+
+  // ---------- tick ----------
+  let motherEmit = 0;
+
+  function gameTick(dt) {
+    if (!G.started || !G.ready || G.over || G.paused) return;
+
+    // the juggernaut holds station, so its plume is a slow idle burn
+    if (G.ships.length) {
+      motherEmit += dt;
+      const mk = BAL.motherSize / MOTHER_LEN;
+      while (motherEmit >= BAL.flameGap * 1.4) {
+        motherEmit -= BAL.flameGap * 1.4;
+        for (let i = 0; i < G.ships.length; i++) {
+          const m = motherMeshes[i];
+          if (!m || !m.visible) continue;
+          flame(m.position, G.ships[i].bearing, 0.92 * MOTHER_LEN * mk,
+                BAL.motherSize * 0.16, BAL.flameLife * 2.2);
+        }
+      }
+    }
+
+    if (!G.inWave) {
+      G.breakLeft -= dt;
+      if (G.breakLeft <= 0) startWave();
+    } else if (G.queue.length) {
+      G.spawnTimer -= dt;
+      while (G.queue.length && G.spawnTimer <= 0) {
+        spawnOne(G.queue.shift());
+        G.spawnTimer += BAL.spawnGap;
+      }
+    }
+
+    // fly out and down
+    for (const a of aliens) {
+      if (!a.alive) continue;
+      const rem = a.dir.angleTo(a.tgt);
+      if (rem > 1e-5) {
+        const step = Math.min(rem, a.turn * dt);
+        fAxis.crossVectors(a.dir, a.tgt);
+        if (fAxis.lengthSq() > 1e-12) {
+          fAxis.normalize();
+          fQ.setFromAxisAngle(fAxis, step);
+          a.dir.applyQuaternion(fQ).normalize();
+        }
+      }
+      a.alt -= a.speed * dt;
+      if (a.alt <= 0) {
+        a.alive = false;
+        G.landed++;
+        G.hp -= BAL.landDamage;
+        say(demolish(a.ci) || 'BREACH');
+        if (G.hp <= 0) { G.hp = 0; loseGame(); }
+      }
+    }
+
+    // fire. Each turret takes whatever is closest to touching down, which
+    // is the shot that is actually about to cost you something.
+    for (const t of towers) {
+      t.cool -= dt;
+      let best = null;
+      for (const a of aliens) {
+        if (!a.alive || a.alt > t.ceiling) continue;
+        if (!t.cover.has(a.ci)) continue;
+        if (a.hp - a.incoming <= 0) continue;      // already dead, shells in flight
+        if (!best || a.alt < best.alt) best = a;
+      }
+      // the barrel tracks whether or not it can shoot yet, so you can read
+      // where a turret is committed at a glance
+      aim.copy(best ? posOf(best) : t.up.clone().multiplyScalar(RADIUS + 1)).sub(t.seat);
+      if (aim.lengthSq() > 1e-9) {
+        aim.normalize();
+        t.aimDir.copy(aim);
+        t.aimQ.setFromUnitVectors(LOCAL_UP, aim);
+      }
+      if (!best || t.cool > 0) continue;
+      t.cool = t.rate;
+      muzzle.copy(t.aimDir).multiplyScalar(GUN_TIP * t.k).add(t.seat);
+      fireShell(muzzle, t.aimDir, best, t.dmg);
+    }
+    for (let i = 0; i < towers.length; i++) writeGun(towers[i], i);
+    if (modelsOK && towers.length) gunMesh.instanceMatrix.needsUpdate = true;
+
+    // compact and draw
+    let live = 0;
+    for (let i = 0; i < aliens.length; i++) {
+      const a = aliens[i];
+      if (!a.alive) continue;
+      aliens[live] = a;
+      posOf(a);
+      a.prev.copy(a.pos);
+      a.pos.copy(alienPos);
+      dummy.position.copy(alienPos);
+      // nose along the actual flight path, which curves as it swings onto
+      // its column, rather than always straight down
+      fZ.subVectors(a.prev, a.pos);
+      if (fZ.lengthSq() < 1e-12) fZ.copy(a.dir);
+      fZ.normalize();
+      fY.copy(a.dir).addScaledVector(fZ, -a.dir.dot(fZ));
+      if (fY.lengthSq() < 1e-12) fY.set(0, 1, 0);
+      fY.normalize();
+      fX.crossVectors(fY, fZ).normalize();
+      fBasis.makeBasis(fX, fY, fZ);
+      dummy.quaternion.setFromRotationMatrix(fBasis);
+      const vk = tiles.meanInr * BAL.viperSize / VIPER_LEN;
+      dummy.scale.setScalar(vk);
+
+      a.emit = (a.emit || 0) + dt;              // fZ already points out the back
+      while (a.emit >= BAL.flameGap) {
+        a.emit -= BAL.flameGap;
+        flame(alienPos, fZ, 0.94 * vk, tiles.meanInr * 0.10, BAL.flameLife);
+      }
+      dummy.updateMatrix();
+      alienMesh.setMatrixAt(live, dummy.matrix);
+      live++;
+    }
+    aliens.length = live;
+    alienMesh.count = live;
+    alienMesh.instanceMatrix.needsUpdate = true;
+
+    updateFighters(dt);
+    updateBullets(dt);
+    updateSmoke(dt);
+
+    if (G.inWave && !G.queue.length && live === 0) endWave();
+  }
+
+  function loseGame() {
+    G.over = true;
+    G.paused = false;
+    hideSummary();
+    G.inWave = false;
+    G.queue.length = 0;
+    aliens.length = 0; alienMesh.count = 0;      // nothing left hanging in the sky
+    bullets.length = 0; bulletMesh.count = 0;
+    hideMothers();
+    say('PLANET LOST \u00B7 NEW WORLD TO RESTART', true);
+  }
+
+  // ---------- readouts ----------
+  const hpVal = document.getElementById('hpVal');
+  const hpFill = document.getElementById('hpFill');
+  const goldVal = document.getElementById('goldVal');
+  const waveVal = document.getElementById('waveVal');
+  const nextVal = document.getElementById('nextVal');
+  const nextStat = nextVal.parentElement;
+  const alertEl = document.getElementById('alert');
+  const buildBtn = document.getElementById('buildBtn');
+  const jetBtn = document.getElementById('jetBtn');
+  const foundryBtn = document.getElementById('foundryBtn');
+  const cannonBtn = document.getElementById('cannonBtn');
+  const waveBtn = document.getElementById('waveBtn');
+  let alertUntil = 0;
+
+  function say(msg, sticky) {
+    alertEl.textContent = msg;
+    alertEl.classList.remove('quiet');
+    alertUntil = sticky ? Infinity : performance.now() + 2200;
+  }
+
+  function updateHud() {
+    const pct = Math.max(0, G.hp / G.hpMax);
+    hpVal.textContent = 'integrity ' + Math.ceil(G.hp);
+    hpFill.style.width = (pct * 100) + '%';
+    hpFill.classList.toggle('low', pct < 0.34);
+    hpVal.classList.toggle('low', pct < 0.34);
+    goldVal.textContent = Math.floor(G.gold);
+    waveVal.textContent = G.over ? G.wave + ' lost' : G.wave;
+    // the epsilon stops it sitting on the full break time for an extra second:
+    // at breakLeft 19.9999, a plain ceil still reads 20
+    const left = Math.max(0, Math.ceil(G.breakLeft - 1e-6));
+    nextVal.textContent = G.over ? '\u2014' : G.inWave ? 'inbound' : left + 's';
+    nextStat.classList.toggle('soon', !G.over && !G.inWave && left <= 5);
+    buildBtn.textContent = 'Build turret (' + BAL.turretCost + ')';
+    jetBtn.textContent = 'Build fighter (' + BAL.jetCost + ')';
+    foundryBtn.textContent = 'Build foundry (' + BAL.foundryCost + ')';
+    cannonBtn.textContent = 'Build sea cannon (' + BAL.cannonCost + ')';
+    cannonBtn.disabled = G.gold < BAL.cannonCost && G.build !== 'cannon';
+    cannonBtn.setAttribute('aria-pressed', G.build === 'cannon' ? 'true' : 'false');
+    foundryBtn.disabled = G.gold < BAL.foundryCost && G.build !== 'foundry';
+    foundryBtn.setAttribute('aria-pressed', G.build === 'foundry' ? 'true' : 'false');
+    buildBtn.disabled = G.gold < BAL.turretCost && G.build !== 'turret';
+    jetBtn.disabled = G.gold < BAL.jetCost && G.build !== 'fighter';
+    buildBtn.setAttribute('aria-pressed', G.build === 'turret' ? 'true' : 'false');
+    jetBtn.setAttribute('aria-pressed', G.build === 'fighter' ? 'true' : 'false');
+    if (summaryUntil && performance.now() > summaryUntil) hideSummary();
+    if (alertUntil !== Infinity && alertUntil && performance.now() > alertUntil) {
+      alertEl.classList.add('quiet');
+      alertUntil = 0;
+    }
+  }
+
+  function setBuild(mode) {
+    G.build = mode || null;
+    hint.classList.toggle('live', !!G.build);
+    hint.textContent =
+        G.build === 'turret'  ? 'Tap a tile to place a turret. Mountains give extra reach. Water is unbuildable.'
+      : G.build === 'fighter' ? 'Tap any tile to base a fighter, water included. It patrols that tile\u2019s circle and closes to gun range.'
+      : G.build === 'cannon' ? 'Tap a WATER tile to float a sea cannon. Longer reach and a heavier shell than a land turret.'
+      : G.build === 'foundry' ? 'Tap a tile to build a foundry. It pays on each wave cleared: mountain 8, desert 7, plain 5, forest 4, swamp 3.'
+      : '';
+    hint.classList.toggle('gone', !G.build);
+  }
+
+  buildBtn.addEventListener('click', () => setBuild(G.build === 'turret' ? null : 'turret'));
+  jetBtn.addEventListener('click', () => setBuild(G.build === 'fighter' ? null : 'fighter'));
+  foundryBtn.addEventListener('click', () => setBuild(G.build === 'foundry' ? null : 'foundry'));
+  cannonBtn.addEventListener('click', () => setBuild(G.build === 'cannon' ? null : 'cannon'));
+  waveBtn.addEventListener('click', () => { if (!G.inWave && !G.over) { G.breakLeft = 0; } });
+
+  // ---------- wave summary ----------
+  const waveModal = document.getElementById('waveModal');
+  const modalTitle = document.getElementById('modalTitle');
+  const rowLanded = document.getElementById('rowLanded');
+  const modalPay = document.getElementById('modalPay');
+  const modalNext = document.getElementById('modalNext');
+  let summaryUntil = 0;
+
+  function showSummary(wave, landed, pay) {
+    modalTitle.textContent = 'Wave ' + wave + ' cleared';
+    rowLanded.querySelector('b').textContent = landed;
+    rowLanded.classList.toggle('bad', landed > 0);   // a clean wave should look clean
+    modalPay.textContent = '+' + pay;
+    modalNext.textContent = wave + 1;
+    waveModal.classList.add('open');
+    G.paused = true;                                 // the break stops here
+    // autoplay just means the card dismisses itself; without it the game
+    // waits, which is the point of pausing rather than running a countdown
+    summaryUntil = autoContinue ? performance.now() + BAL.summaryTime * 1000 : 0;
+  }
+
+  function hideSummary() {
+    if (waveModal.classList.contains('open')) G.paused = false;
+    waveModal.classList.remove('open');
+    summaryUntil = 0;
+  }
+
+  let autoContinue = false;
+  const autoBox = document.getElementById('autoBox');
+  autoBox.addEventListener('change', () => {
+    autoContinue = autoBox.checked;
+    if (autoContinue && waveModal.classList.contains('open')) {
+      summaryUntil = performance.now() + BAL.summaryTime * 1000;
+    } else if (!autoContinue) {
+      summaryUntil = 0;
+    }
+  });
+
+  document.getElementById('modalBtn').addEventListener('click', hideSummary);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideSummary(); });
+
+  // ---------- model loading ----------
+  //
+  //  Models are fetched as files rather than inlined, so they download in
+  //  parallel, get cached between visits, and adding another one costs
+  //  nothing at startup. The trade is that this no longer runs from file://,
+  //  because fetch refuses local paths: it needs the dev preview or any
+  //  static host.
+  const MODEL_DIR = '';   // root-relative: survives nested routes
+  const MODEL_FILES = {
+    pad: '/__l5e/assets-v1/ed785583-b953-46d5-ab3f-e50d5d30ff44/pad.glb',
+    gun: '/__l5e/assets-v1/133193a7-4cfb-472e-b1b9-78777d72ff7a/gun.glb',
+    jet: '/__l5e/assets-v1/aa131bb3-9b03-4489-b483-5ab9fe50aa00/jet.glb',
+    foundry: '/__l5e/assets-v1/9da45853-b69f-416c-9044-3847846ee13c/foundry.glb',
+    mother: '/__l5e/assets-v1/a43bfc6e-27db-4579-b762-be7ff49cf039/mother.glb',
+    viper: '/__l5e/assets-v1/946d2261-e618-49a3-a170-f8d9d8d00e20/viper.glb',
+    hover: '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb',
+    core: '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb'
+  };
+
+  function instanced(parsed, max, dynamic) {
+    const m = new THREE.InstancedMesh(parsed.geo, parsed.mat, max);
+    m.count = 0;
+    m.frustumCulled = false;                   // instances are scattered, so the
+    if (dynamic) m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);   // origin bound lies
+    world.add(m);
+    return m;
+  }
+
+  function buildModels(parts) {
+    padMesh = instanced(parts.pad, MAX_TURRETS, true);
+    gunMesh = instanced(parts.gun, MAX_TURRETS, true);
+    modelsOK = true;
+
+    jetMesh = instanced(parts.jet, MAX_TURRETS, true);
+    foundryMesh = instanced(parts.foundry, MAX_TURRETS, false);
+    platMesh = instanced(parts.hover, MAX_TURRETS, true);
+    coreMesh = instanced(parts.core, MAX_TURRETS, true);
+
+    for (let i = 0; i < MAX_SHIPS; i++) {
+      const m = new THREE.Mesh(parts.mother.geo, parts.mother.mat);  // geo/mat shared
+      m.frustumCulled = false;
+      m.visible = false;
+      world.add(m);
+      motherMeshes.push(m);
+    }
+
+    // swap the placeholder out from under the pod mesh so every existing
+    // reference to alienMesh stays valid
+    alienMesh.geometry.dispose();
+    alienMesh.material.dispose();
+    alienMesh.geometry = parts.viper.geo;
+    alienMesh.material = parts.viper.mat;
+  }
+
+  const startBtn = document.getElementById('startBtn');
+
+  async function loadModels() {
+    startBtn.disabled = true;
+    startBtn.textContent = 'Loading models\u2026';
+    const names = Object.keys(MODEL_FILES);
+    try {
+      const bufs = await Promise.all(names.map(async n => {
+        const res = await fetch(MODEL_DIR + MODEL_FILES[n]);
+        if (!res.ok) throw new Error(MODEL_FILES[n] + ': ' + res.status);
+        return res.arrayBuffer();
+      }));
+      const parts = {};
+      names.forEach((n, i) => { parts[n] = parseGLB(bufs[i]); });
+      buildModels(parts);
+      startBtn.disabled = false;
+      startBtn.textContent = 'Start';
+    } catch (e) {
+      console.error('model load failed', e);
+      startBtn.textContent = 'Models failed to load';
+      // the game is still playable, just invisible in places, so let them in
+      startBtn.disabled = false;
+    }
+  }
+
+  // ---------- start card ----------
+  const startModal = document.getElementById('startModal');
+  const modelsReady = loadModels();
+  const sizeBtns = [...startModal.querySelectorAll('.sizes button')];
+  let chosenFreq = 1;
+
+  for (const b of sizeBtns) {
+    b.addEventListener('click', () => {
+      chosenFreq = +b.dataset.freq;
+      for (const o of sizeBtns) o.setAttribute('aria-pressed', o === b ? 'true' : 'false');
+    });
+  }
+
+  startBtn.addEventListener('click', () => {
+    startModal.classList.remove('open');
+    if (chosenFreq !== freqIdx) {                    // only rebuild if it changed
+      freqIdx = chosenFreq;
+      makeGrid();
+      randomise();
+    }
+    G.started = true;
+    resetGame();                                     // picks the first bearing
+  });
+
+  // ---------- world menu ----------
+  const menuBtn = document.getElementById('menuBtn');
+  const menuPanel = document.getElementById('menuPanel');
+
+  function setMenu(open) {
+    menuPanel.classList.toggle('open', open);
+    menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  menuBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setMenu(menuBtn.getAttribute('aria-expanded') !== 'true');
+  });
+  // the panel swallows its own clicks so picking an item does not close it
+  // out from under the button that was just pressed
+  menuPanel.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', () => setMenu(false));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setMenu(false); });
+
+  // ---------- picking ----------
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+
+  function cellForFace(f) {
+    let lo = 0, hi = cellFaceStart.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (cellFaceStart[mid] <= f) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  function tapAt(clientX, clientY) {
+    if (!tileMesh || G.over || !G.started || G.paused) return;
+    ndc.x = (clientX / window.innerWidth) * 2 - 1;
+    ndc.y = -(clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(ndc, camera);
+    const hit = raycaster.intersectObject(tileMesh, false)[0];
+    if (!hit || hit.faceIndex === undefined) return;
+    const ci = cellForFace(hit.faceIndex);
+
+    if (!G.build) return;
+    // a fighter is based on a tile, not built on it, so it can sit over water
+    const wet = cellType[ci] === 'lake';
+    if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
+    if (!wet && G.build === 'cannon') { say('SEA CANNON NEEDS WATER'); return; }
+    if (towerAt.has(ci) || fighterAt.has(ci) || foundryAt.has(ci)) { say('TILE OCCUPIED'); return; }
+
+    if (G.build === 'cannon') {
+      if (G.gold < BAL.cannonCost) { say('NOT ENOUGH GOLD'); return; }
+      if (!placeCannon(ci)) { say('CANNON LIMIT REACHED'); return; }
+      G.gold -= BAL.cannonCost;
+      return;
+    }
+
+    if (G.build === 'foundry') {
+      if (foundries.length >= MAX_TURRETS) { say('FOUNDRY LIMIT REACHED'); return; }
+      if (G.gold < BAL.foundryCost) { say('NOT ENOUGH GOLD'); return; }
+      G.gold -= BAL.foundryCost;
+      const fo = placeFoundry(ci);
+      if (fo) say('FOUNDRY ' + fo.rate + ' GOLD/WAVE');
+      return;
+    }
+    if (G.build === 'fighter') {
+      if (fighters.length >= MAX_TURRETS) { say('FIGHTER LIMIT REACHED'); return; }
+      if (G.gold < BAL.jetCost) { say('NOT ENOUGH GOLD'); return; }
+      G.gold -= BAL.jetCost;
+      placeFighter(ci);
+      return;
+    }
+    if (towers.length >= MAX_TURRETS) { say('TURRET LIMIT REACHED'); return; }
+    if (G.gold < BAL.turretCost) { say('NOT ENOUGH GOLD'); return; }
+    G.gold -= BAL.turretCost;
+    placeTurret(ci);
+  }
+
+  function resetGame() {
+    clearTurrets();
+    clearFighters();
+    clearFoundries();
+    aliens.length = 0;
+    alienMesh.count = 0;
+    bullets.length = 0;
+    bulletMesh.count = 0;
+    sCount = 0;
+    smokeGeo.setDrawRange(0, 0);
+    G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0;
+    G.inWave = false; G.breakLeft = BAL.breakTime; G.queue = [];
+    G.over = false;
+    G.paused = false;
+    G.landed = 0;
+    hideSummary();
+    G.ships.length = 0;
+    hideMothers();
+    G.bearing = null;
+    pickBearing();
+    setBuild(null);
+    G.ready = true;
+    updateHud();
+  }
+
+  // ---------- orbit ----------
+  const orient = new THREE.Quaternion();
+  const orientGoal = new THREE.Quaternion();
+  const OFFSET = new THREE.Vector3(0, 0, 1);
+  const UP = new THREE.Vector3(0, 1, 0);
+  const RIGHT = new THREE.Vector3(1, 0, 0);
+  const TARGET = new THREE.Vector3(0, 0, 0);
+  const targetGoal = new THREE.Vector3(0, 0, 0);
+
+  let distance = 6, distanceGoal = 6;
+  let MIN_D = 1.15, MAX_D = 18;
+  let velX = 0, velY = 0;
+  let dragging = false, engaged = false;
+  const pointers = new Map();
+  let pinchStart = 0, pinchDist = 0;
+  let downX = 0, downY = 0, downT = 0, moved = 0;
+  const TAP_SLOP = 8, TAP_MS = 600;
+  const qTmp = new THREE.Quaternion(), qA = new THREE.Quaternion(), qB = new THREE.Quaternion();
+  const tmpDir = new THREE.Vector3();
+
+  // Rotate the globe about its own centre, around the axes the camera is
+  // actually looking along, so a drag pushes the surface the way the finger
+  // goes no matter where on the ball you are.
+  const spinAxis = new THREE.Vector3(), qSpin = new THREE.Quaternion();
+
+  function spinWorld(dx, dy) {
+    worldTween = false;              // a hand on the planet beats the auto-swing
+    camera.updateMatrixWorld();
+    spinAxis.setFromMatrixColumn(camera.matrixWorld, 1).normalize();   // camera up
+    qSpin.setFromAxisAngle(spinAxis, dx);
+    world.quaternion.premultiply(qSpin);
+    spinAxis.setFromMatrixColumn(camera.matrixWorld, 0).normalize();   // camera right
+    qSpin.setFromAxisAngle(spinAxis, dy);
+    world.quaternion.premultiply(qSpin);
+  }
+
+  // one entry point for drag, inertia, drift and the arrow keys: in surface
+  // view the world turns, otherwise the camera orbits
+  function applySpin(vx, vy) {
+    if (surfaceView) spinWorld(-vx, -vy); else rotateBy(vx, vy);
+  }
+
+  function rotateBy(dx, dy) {
+    qTmp.setFromAxisAngle(UP, dx);    orient.multiply(qTmp);
+    qTmp.setFromAxisAngle(RIGHT, dy); orient.multiply(qTmp);
+    orientGoal.copy(orient);          // a live drag cancels any running tween
+  }
+  function applyCamera() {
+    camera.position.copy(OFFSET).applyQuaternion(orient).multiplyScalar(distance).add(TARGET);
+    camera.up.copy(UP).applyQuaternion(orient);
+    camera.lookAt(TARGET);
+  }
+
+  // =====================================================================
+  //  Two camera modes.
+  //
+  //  The framed cap sits 39 degrees off the pole, holds about 11% of the
+  //  surface area and is 1.26 across. Over that span the surface drops 0.22,
+  //  so it reads as a gently domed plane rather than a ball.
+  //
+  //  The cap is fitted to the frame HEIGHT, never its width. Fitting the width
+  //  on a portrait phone would need a distance near 2.8, which puts the whole
+  //  sphere back in frame and defeats the point; cropping the sides instead
+  //  keeps the view close at every aspect ratio.
+  // =====================================================================
+  const viewBtn = document.getElementById('viewBtn');
+  const CAP_RIM = 0.6323;            // sin(39.2 deg)
+  const SURFACE_TILT = 0.50;         // radians above the local tangent plane
+  let surfaceView = false;
+
+  const rimPt = new THREE.Vector3(), rimV = new THREE.Vector3();
+  const camF = new THREE.Vector3(), camU = new THREE.Vector3(), camC = new THREE.Vector3();
+
+  // half-angle subtended by the cap rim, vertically, from distance d
+  function rimHalfAngle(d) {
+    const st = Math.sin(SURFACE_TILT), ct = Math.cos(SURFACE_TILT);
+    camC.set(0, RADIUS + st * d, ct * d);
+    camF.set(0, -st, -ct);
+    camU.set(0, ct, -st);
+    const y = Math.sqrt(Math.max(RADIUS * RADIUS - CAP_RIM * CAP_RIM, 0));
+    let worst = 0;
+    for (let i = 0; i < 72; i++) {
+      const a = (i / 72) * Math.PI * 2;
+      rimPt.set(CAP_RIM * Math.sin(a), y, CAP_RIM * Math.cos(a));
+      rimV.subVectors(rimPt, camC);
+      const depth = rimV.dot(camF);
+      if (depth <= 1e-6) continue;
+      worst = Math.max(worst, Math.abs(Math.atan2(rimV.dot(camU), depth)));
+    }
+    return worst;
+  }
+
+  // solved rather than hardcoded, so editing CAP_RIM or SURFACE_TILT stays sane
+  function surfaceDistance() {
+    const goal = THREE.MathUtils.degToRad(camera.fov) / 2 * 0.95;
+    let lo = 0.4, hi = 8;
+    for (let i = 0; i < 40; i++) {
+      const mid = (lo + hi) / 2;
+      if (rimHalfAngle(mid) > goal) lo = mid; else hi = mid;
+    }
+    return hi;
+  }
+
+  function setView(on) {
+    surfaceView = on;
+    viewBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    viewBtn.textContent = on ? 'Whole sphere' : 'Surface view';
+    engaged = true;                  // stop the idle drift fighting the tween
+    velX = velY = 0;                 // don't carry a camera flick into a world spin
+
+    // swing up from wherever the camera already is, so the move reads as one
+    // continuous motion instead of a cut
+    tmpDir.copy(OFFSET).applyQuaternion(orient);
+    const az = Math.atan2(tmpDir.x, tmpDir.z);
+
+    if (on) {
+      targetGoal.set(0, RADIUS, 0);
+      MIN_D = 0.3; MAX_D = 4.5;
+      distanceGoal = surfaceDistance();
+      qA.setFromAxisAngle(UP, az);
+      qB.setFromAxisAngle(RIGHT, -SURFACE_TILT);
+      orientGoal.copy(qA).multiply(qB);
+    } else {
+      targetGoal.set(0, 0, 0);
+      MIN_D = 1.15; MAX_D = 18;
+      distanceGoal = 6;
+      qA.setFromAxisAngle(UP, az);
+      qB.setFromAxisAngle(RIGHT, -0.35);
+      orientGoal.copy(qA).multiply(qB);
+    }
+  }
+
+  // ---------- placement ----------
+  const gridBtn = document.getElementById('gridBtn');
+  const randBtn = document.getElementById('randBtn');
+  const countEl = document.getElementById('count');
+  const hint = document.getElementById('hint');
+
+  gridBtn.addEventListener('click', () => {
+    freqIdx = (freqIdx + 1) % FREQS.length;
+    makeGrid();
+    randomise();                     // a new grid deserves a world on it
+  });
+  randBtn.addEventListener('click', randomise);
+  viewBtn.addEventListener('click', () => setView(!surfaceView));
+
+  function updateCount() {
+    if (!cellType) return;
+    let land = 0, water = 0;
+    for (const t of cellType) t === 'lake' ? water++ : land++;
+    countEl.textContent = land + ' land / ' + water + ' water';
+  }
+
+  // ---------- input ----------
+  function engage() {
+    engaged = true;
+  }
+  function speed() { return 0.005 * (camera.fov / 45); }
+
+  stage.addEventListener('pointerdown', (e) => {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    stage.setPointerCapture(e.pointerId);
+    dragging = true;
+    stage.classList.add('dragging');
+    velX = velY = 0;
+    engage();
+    downX = e.clientX; downY = e.clientY; downT = performance.now(); moved = 0;
+    if (pointers.size === 2) { pinchStart = pinchSpan(); pinchDist = distanceGoal; }
+  });
+
+  stage.addEventListener('pointermove', (e) => {
+    const prev = pointers.get(e.pointerId);
+    if (!prev) {
+      return;
+    }
+    const dx = e.clientX - prev.x;
+    const dy = e.clientY - prev.y;
+    prev.x = e.clientX; prev.y = e.clientY;
+    moved = Math.max(moved, Math.hypot(e.clientX - downX, e.clientY - downY));
+
+    if (pointers.size >= 2) {
+      const span = pinchSpan();
+      if (pinchStart > 0) distanceGoal = clamp(pinchDist * (pinchStart / span), MIN_D, MAX_D);
+      return;
+    }
+    velX = -dx * speed();
+    velY = -dy * speed();
+    applySpin(velX, velY);
+  });
+
+  function release(e, isTapCandidate) {
+    const wasSingle = pointers.size === 1;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchStart = 0;
+    if (pointers.size === 0) { dragging = false; stage.classList.remove('dragging'); }
+    if (isTapCandidate && wasSingle && moved < TAP_SLOP &&
+        performance.now() - downT < TAP_MS) {
+      tapAt(e.clientX, e.clientY);
+    }
+  }
+  stage.addEventListener('pointerup', (e) => release(e, true));
+  stage.addEventListener('pointercancel', (e) => release(e, false));
+  stage.addEventListener('lostpointercapture', (e) => release(e, false));
+
+  function pinchSpan() {
+    const p = [...pointers.values()];
+    if (p.length < 2) return 0;
+    return Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1;
+  }
+
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    engage();
+    distanceGoal = clamp(distanceGoal * (1 + Math.sign(e.deltaY) * 0.1), MIN_D, MAX_D);
+  }, { passive: false });
+
+  stage.addEventListener('keydown', (e) => {
+    const step = 0.06;
+    const map = {
+      ArrowLeft: [step, 0], ArrowRight: [-step, 0],
+      ArrowUp: [0, step], ArrowDown: [0, -step]
+    };
+    if (map[e.key]) { e.preventDefault(); engage(); applySpin(map[e.key][0], map[e.key][1]); }
+    if (e.key === '+' || e.key === '=') distanceGoal = clamp(distanceGoal - 0.5, MIN_D, MAX_D);
+    if (e.key === '-' || e.key === '_') distanceGoal = clamp(distanceGoal + 0.5, MIN_D, MAX_D);
+    if (e.key === 'v' || e.key === 'V') setView(!surfaceView);
+    if (e.key === 'r' || e.key === 'R') randomise();
+    if (e.key === 'b' || e.key === 'B') setBuild(G.build === 'turret' ? null : 'turret');
+    if (e.key === 'f' || e.key === 'F') setBuild(G.build === 'fighter' ? null : 'fighter');
+    if (e.key === 'g' || e.key === 'G') setBuild(G.build === 'foundry' ? null : 'foundry');
+    if (e.key === 'c' || e.key === 'C') setBuild(G.build === 'cannon' ? null : 'cannon');
+  });
+
+  function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
+
+  let readoutTick = 0;
+
+  let lastT = performance.now();
+
+  function frame() {
+    requestAnimationFrame(frame);
+    const now = performance.now();
+    const dt = Math.min((now - lastT) / 1000, 0.05);   // a hidden tab must not
+    lastT = now;                                       // land a whole wave at once
+
+    if (worldTween && !dragging) {
+      world.quaternion.slerp(qWorldGoal, 0.05);
+      if (world.quaternion.angleTo(qWorldGoal) < 0.01) worldTween = false;
+    }
+    gameTick(dt);
+
+    if (!dragging) {
+      if (Math.abs(velX) > 1e-5 || Math.abs(velY) > 1e-5) {
+        velX *= 0.94; velY *= 0.94;
+        applySpin(velX, velY);
+      } else if (!engaged && !reduced) {
+        applySpin(0.0016, 0);
+      }
+    }
+    if (!dragging) orient.slerp(orientGoal, 0.12);
+    TARGET.lerp(targetGoal, 0.12);
+    distance += (distanceGoal - distance) * 0.12;
+    applyCamera();
+    if (++readoutTick % 4 === 0) updateHud();
+    renderer.render(scene, camera);
+  }
+
+  window.addEventListener('resize', () => {
+    smokeMat.uniforms.uScale.value = window.innerHeight * 0.5;
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  makeGrid();
+  randomise();                       // a world to look at behind the start card
+  updateHud();
+  rotateBy(0.5, -0.35);
+  orientGoal.copy(orient);
+  applyCamera();
+  frame();
+
+})();
+</script>
+</body>
+</html>
