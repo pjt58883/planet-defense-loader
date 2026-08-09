@@ -969,9 +969,11 @@
     //      Waves are all vipers until the entry waves below, then the mix
     //      shifts so the late game asks different questions: hulks soak a
     //      turret's whole magazine, darts outrun its tracking window.
+    // shield: fraction of max hp below which the type's energy shield
+    // visual drops - a bare hulk IS the damage readout
     enemies: {
       viper: { hp: 1.0,  speed: 1.0,  dmg: 1.0, pay: 1, size: 0.53 },
-      hulk:  { hp: 3.2,  speed: 0.62, dmg: 2.0, pay: 3, size: 0.80 },
+      hulk:  { hp: 3.2,  speed: 0.62, dmg: 2.0, pay: 3, size: 0.80, shield: 0.5 },
       dart:  { hp: 0.55, speed: 1.7,  dmg: 1.0, pay: 2, size: 0.42 }
     },
     hulkFrom: 4,                            // first wave armoured hulks appear
@@ -1912,7 +1914,7 @@
   //  the viper's length so the size maths is identical either way; when a
   //  real hulk or dart GLB lands in public/assets, measure it and update
   //  its entry here.
-  const ENEMY_LEN = { viper: 1.898, hulk: 1.884, dart: 1.884 };   // dart = viper model's length
+  const ENEMY_LEN = { viper: 1.898, hulk: 1.898, dart: 1.884 };   // dart = viper model's length
   const VIPER_LEN = 1.884;           // placeholder cones are built to this
 
   // one instanced mesh per enemy type, all drawn from the same alien list
@@ -1933,9 +1935,24 @@
     dart:  protoEnemyMesh(0x58c8ff, 0x0d2c48)
   };
 
+  //  Energy shields: one faint red shell per shielded enemy, drawn until
+  //  the hull under it has lost the roster's shield fraction of its health.
+  const SHIELD_R = 1.2;                // shell radius, in enemy scale units
+  const shieldMesh = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 16, 12),
+    new THREE.MeshBasicMaterial({
+      color: 0xff2f2f, transparent: true, opacity: 0.10, depthWrite: false
+    }),
+    MAX_ALIENS
+  );
+  shieldMesh.count = 0;
+  shieldMesh.frustumCulled = false;
+  world.add(shieldMesh);
+
   function clearEnemies() {
     aliens.length = 0;
     for (const t in enemyMeshes) enemyMeshes[t].count = 0;
+    shieldMesh.count = 0;
   }
   const dummy = new THREE.Object3D();
 
@@ -2456,6 +2473,7 @@
       pos: new THREE.Vector3(),
       prev: new THREE.Vector3(),
       hp: spec.hp * E.hp,
+      hp0: spec.hp * E.hp,               // spawn health, for the shield readout
       incoming: 0,
       dmg: Math.round(BAL.landDamage * E.dmg),
       pay: E.pay,
@@ -2594,7 +2612,7 @@
     }
 
     // compact and draw, each type into its own mesh
-    let live = 0;
+    let live = 0, shields = 0;
     const drawn = { viper: 0, hulk: 0, dart: 0 };
     for (let i = 0; i < aliens.length; i++) {
       const a = aliens[i];
@@ -2625,6 +2643,15 @@
       }
       dummy.updateMatrix();
       enemyMeshes[a.type].setMatrixAt(drawn[a.type]++, dummy.matrix);
+
+      // the shell rides the hull until half its health is gone
+      const sh = BAL.enemies[a.type].shield;
+      if (sh && a.hp > a.hp0 * sh) {
+        dummy.quaternion.set(0, 0, 0, 1);
+        dummy.scale.setScalar(vk * SHIELD_R);
+        dummy.updateMatrix();
+        shieldMesh.setMatrixAt(shields++, dummy.matrix);
+      }
       live++;
     }
     aliens.length = live;
@@ -2632,6 +2659,8 @@
       enemyMeshes[t].count = drawn[t];
       enemyMeshes[t].instanceMatrix.needsUpdate = true;
     }
+    shieldMesh.count = shields;
+    shieldMesh.instanceMatrix.needsUpdate = true;
 
     updateFighters(dt);
     updateBullets(dt);
@@ -2891,7 +2920,7 @@
     viper:   ['/assets/dropship.glb', '/assets/viper.glb'],
     hover:   ['/assets/hover.glb',   '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb'],
     core:    ['/assets/core.glb',    '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb'],
-    hulk:    ['/assets/hulk.glb'],
+    hulk:    ['/assets/hulk.glb', '/assets/viper.glb'],
     // the dart flies the retired viper model; a dedicated dart.glb in
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
@@ -2905,11 +2934,11 @@
 
   };
 
-  //  Slots with no shipped GLB yet: they render as placeholders by design,
-  //  so a missing file is expected and not worth an on-screen warning.
-  //  Drop a model into public/assets under that name to fill the slot
-  //  (and measure its length into ENEMY_LEN / footprint constants).
-  const OPTIONAL_MODELS = new Set(['hulk']);
+  //  Slots with no shipped GLB yet render as placeholders by design, so a
+  //  missing file is expected and not worth an on-screen warning. Every
+  //  slot has a real model now; new units can add themselves here until
+  //  their GLB lands in public/assets.
+  const OPTIONAL_MODELS = new Set();
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
