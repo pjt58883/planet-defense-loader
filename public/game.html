@@ -1912,7 +1912,7 @@
   //  the viper's length so the size maths is identical either way; when a
   //  real hulk or dart GLB lands in public/assets, measure it and update
   //  its entry here.
-  const ENEMY_LEN = { viper: 1.898, hulk: 1.884, dart: 1.884 };   // dart = viper model's length
+  const ENEMY_LEN = { viper: 1.898, hulk: 1.898, dart: 1.884 };   // dart = viper model's length
   const VIPER_LEN = 1.884;           // placeholder cones are built to this
 
   // one instanced mesh per enemy type, all drawn from the same alien list
@@ -2891,7 +2891,7 @@
     viper:   ['/assets/dropship.glb', '/assets/viper.glb'],
     hover:   ['/assets/hover.glb',   '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb'],
     core:    ['/assets/core.glb',    '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb'],
-    hulk:    ['/assets/hulk.glb'],
+    hulk:    ['/assets/hulk.glb', '/assets/viper.glb'],
     // the dart flies the retired viper model; a dedicated dart.glb in
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
@@ -2905,11 +2905,11 @@
 
   };
 
-  //  Slots with no shipped GLB yet: they render as placeholders by design,
-  //  so a missing file is expected and not worth an on-screen warning.
-  //  Drop a model into public/assets under that name to fill the slot
-  //  (and measure its length into ENEMY_LEN / footprint constants).
-  const OPTIONAL_MODELS = new Set(['hulk']);
+  //  Slots with no shipped GLB yet render as placeholders by design, so a
+  //  missing file is expected and not worth an on-screen warning. Every
+  //  slot has a real model now; new units can add themselves here until
+  //  their GLB lands in public/assets.
+  const OPTIONAL_MODELS = new Set();
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
