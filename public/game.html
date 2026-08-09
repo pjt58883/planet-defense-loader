@@ -1001,9 +1001,13 @@
     strayLife:  2.0,                        // seconds a shell with no target keeps going
     batteryCost: 18,
     recoveryCost: 15,                       // a team to dig one lost tile back out
+    recoveryRange: 1,                       // the team's sidearms; self-defence only
+    recoveryCeiling: 0.60,
+    recoveryRate: 0.5, recoveryDmg: 4,
     batteryRange: 3,                        // rings; no mountain bonus
     batteryCeiling: 1.30,                   // engages higher than any turret
     batteryRate: 2.2, batteryDmg: 30,       // one slow, heavy shell
+    batteryTurn: 2.0,                       // radians/s the mount slews
     splashRadius: 2.2,                      // burst radius, tile inradii
     splashDmg: 14,                          // dealt to everything else in it
     upgradeMax: 3,                          // levels a building can reach
@@ -1673,6 +1677,7 @@
     const up = f.up;
     const k = f.fit / BATTERY_R;
 
+    const alignQ = new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up);
     const tur = {
       ci, kind: 'battery', k, level: 1,
       up: up.clone(),
@@ -1683,16 +1688,29 @@
       cover: ringSet(ci, BAL.batteryRange),
       ceiling: BAL.batteryCeiling,
       rate: BAL.batteryRate, dmg: BAL.batteryDmg,
-      splashDmg: BAL.splashDmg, cool: 0
+      splashDmg: BAL.splashDmg, cool: 0,
+      // the mount slews about its own up axis to face the target; b1/b2
+      // are the tangent directions the model's X and Z axes start on
+      base: up.clone().multiplyScalar(RADIUS - f.fit * 0.04),
+      alignQ,
+      b1: new THREE.Vector3(1, 0, 0).applyQuaternion(alignQ),
+      b2: new THREE.Vector3(0, 0, 1).applyQuaternion(alignQ),
+      yaw: 0
     };
-    mPos.copy(up).multiplyScalar(RADIUS - f.fit * 0.04);
-    mQuat.setFromUnitVectors(LOCAL_UP, up);
-    mScale.setScalar(k);
-    tur.batMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
     towers.push(tur);
     towerAt.set(ci, tur);
     rebuildEmplacements();
     return tur;
+  }
+
+  const bV = new THREE.Vector3(), bYawQ = new THREE.Quaternion(), bFullQ = new THREE.Quaternion();
+
+  function writeBattery(t) {
+    if (!batteryMesh || !(t.batSlot >= 0)) return;
+    bYawQ.setFromAxisAngle(LOCAL_UP, t.yaw);
+    bFullQ.copy(t.alignQ).multiply(bYawQ);
+    mScale.setScalar(t.k);
+    batteryMesh.setMatrixAt(t.batSlot, mMat.compose(t.base, bFullQ, mScale));
   }
 
   //  Turrets, cannons and batteries live in one list so targeting, firing
@@ -1708,8 +1726,8 @@
         if (platMesh) { platMesh.setMatrixAt(plats, t.platMat); coreMesh.setMatrixAt(plats, t.coreMat); }
         plats++;
       } else if (t.kind === 'battery') {
-        if (batteryMesh) batteryMesh.setMatrixAt(bats, t.batMat);
-        bats++;
+        t.batSlot = bats++;
+        writeBattery(t);
       } else {
         if (modelsOK) padMesh.setMatrixAt(pads, t.padMat);
         pads++;
@@ -1815,7 +1833,9 @@
   //  undo. When the timer runs out the X comes off, the team packs up, and
   //  the tile is buildable ground again.
   // =====================================================================
-  const RECOV_R = 0.95;                 // footprint divisor, model units
+  const RECOV_R = 1.27;                 // footprint divisor, model units;
+                                        // padded a quarter over the raw fit
+                                        // so the team reads as a small crew
   const recoveries = [];
   const recoveryAt = new Map();
   let recoveryMesh = null;
@@ -1837,7 +1857,16 @@
     if (recoveries.length >= MAX_TURRETS) return null;
     const f = tileFit(ci);
     const need = recoveryWavesFor(ci);
-    const r = { ci, kind: 'recovery', level: 1, need, left: need, up: f.up.clone(), mat: new THREE.Matrix4() };
+    const r = {
+      ci, kind: 'recovery', level: 1, need, left: need,
+      up: f.up.clone(), mat: new THREE.Matrix4(),
+      // the dig crew shoots back: short-reach sidearms that only matter
+      // when something is coming down on top of them
+      cover: ringSet(ci, BAL.recoveryRange),
+      ceiling: BAL.recoveryCeiling,
+      rate: BAL.recoveryRate, dmg: BAL.recoveryDmg, cool: 0,
+      pos: f.up.clone().multiplyScalar(RADIUS + f.fit * 0.5)
+    };
     recoveries.push(r);
     recoveryAt.set(ci, r);
 
@@ -2044,6 +2073,19 @@
   }
 
   const bDir = new THREE.Vector3(), bStep = new THREE.Vector3(), bTgt = new THREE.Vector3();
+
+  //  A hot, short-lived burst at the muzzle. Three overlapping puffs that
+  //  die inside a fifth of a second read as a strobing flash when the gun
+  //  cycles, where one long-lived puff would just read as smoke.
+  function muzzleFlash(p) {
+    for (let k = 0; k < 3; k++) {
+      puff(p,
+           tiles.meanInr * (0.20 + Math.random() * 0.18),
+           tiles.meanInr * (0.55 + Math.random() * 0.35),
+           0.10 + Math.random() * 0.08,
+           1.0, 0.93, 0.55, 0.95);
+    }
+  }
 
   function fireShell(from, dir, target, dmg, splashDmg) {
     if (bullets.length >= BULLET_MAX) return;
@@ -2517,6 +2559,40 @@
     for (const t of towers) writeGun(t);
     if (modelsOK && towers.length) gunMesh.instanceMatrix.needsUpdate = true;
 
+    // batteries have no swivelling barrel, so the whole mount slews toward
+    // the target's bearing instead, capped by a turn rate like the jets
+    for (const t of towers) {
+      if (t.kind !== 'battery') continue;
+      bV.copy(t.aimDir).addScaledVector(t.up, -t.aimDir.dot(t.up));
+      if (bV.lengthSq() > 1e-8) {
+        const goal = Math.atan2(-bV.dot(t.b1), -bV.dot(t.b2));
+        let d = goal - t.yaw;
+        d = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        const lim = BAL.batteryTurn * dt;
+        t.yaw += THREE.MathUtils.clamp(d, -lim, lim);
+      }
+      writeBattery(t);
+    }
+    if (batteryMesh && batteryMesh.count) batteryMesh.instanceMatrix.needsUpdate = true;
+
+    // the dig crews' sidearms: short reach, low ceiling, but every shot
+    // leaves a strobing flash at the muzzle so a defended dig reads busy
+    for (const r of recoveries) {
+      r.cool -= dt;
+      let best = null;
+      for (const a of aliens) {
+        if (!a.alive || a.alt > r.ceiling) continue;
+        if (!r.cover.has(a.ci)) continue;
+        if (a.hp - a.incoming <= 0) continue;
+        if (!best || a.alt < best.alt) best = a;
+      }
+      if (!best || r.cool > 0) continue;
+      r.cool = r.rate;
+      aim.copy(posOf(best)).sub(r.pos).normalize();
+      fireShell(r.pos, aim, best, r.dmg);
+      muzzleFlash(r.pos);
+    }
+
     // compact and draw, each type into its own mesh
     let live = 0;
     const drawn = { viper: 0, hulk: 0, dart: 0 };
@@ -2920,7 +2996,7 @@
     foundryMesh = instanced(parts.foundry, MAX_TURRETS, false);
     platMesh = instanced(parts.hover, MAX_TURRETS, true);
     coreMesh = instanced(parts.core, MAX_TURRETS, true);
-    batteryMesh = instanced(parts.battery, MAX_TURRETS, false);
+    batteryMesh = instanced(parts.battery, MAX_TURRETS, true);   // it slews to aim
     // the outpost is modelled centred on its own origin; drop it so the
     // ground plate sits on the tile instead of half-buried
     parts.recovery.geo.computeBoundingBox();
