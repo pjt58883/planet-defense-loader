@@ -2227,15 +2227,22 @@
   const qWorldGoal = new THREE.Quaternion();
   let worldTween = false;
 
-  function faceBearing(bearing) {
-    // Off by default: the planet holding still is worth more than the
-    // convenience of being shown the next zone, since the swing fires the
-    // moment a wave ends and yanks the view out from under you.
-    if (!BAL.autoFace) return;
+  // swing the world so the bearing faces the camera
+  function swingTo(bearing) {
     camera.updateMatrixWorld();
     const front = camera.position.clone().normalize();
     qWorldGoal.setFromUnitVectors(bearing, front);
     worldTween = true;
+  }
+
+  function faceBearing(bearing) {
+    // Off by default: the planet holding still is worth more than the
+    // convenience of being shown the next zone, since this swing fires the
+    // moment a wave ends and yanks the view out from under you. Dismissing
+    // the wave report swings unconditionally instead - see hideSummary -
+    // because that moment is the player's own.
+    if (!BAL.autoFace) return;
+    swingTo(bearing);
   }
 
 
@@ -2826,7 +2833,15 @@
   }
 
   function hideSummary() {
-    if (waveModal.classList.contains('open')) G.paused = false;
+    // G.paused distinguishes a player dismissing the report from the card
+    // being cleaned up by a reset or a loss, which set paused false first
+    if (waveModal.classList.contains('open') && G.paused) {
+      G.paused = false;
+      // the report is done: hand the view to the next problem by
+      // centring the coming drop zone
+      if (G.ships.length && !G.over) swingTo(meanBearing());
+    }
+    G.paused = false;
     waveModal.classList.remove('open');
     summaryUntil = 0;
   }
