@@ -22,3 +22,16 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+
+### 3D models
+
+The game's GLB models (`pad`, `gun`, `jet`, `foundry`, `mother`, `viper`,
+`hover`, `core`) are stored in Lovable's asset store, referenced by the
+`/__l5e/assets-v1/...` URLs in `public/game.html` (see the manifests in
+`src/assets/*.asset.json`). Those URLs only resolve when the site is served
+by Lovable.
+
+The loader tries `public/assets/<name>.glb` first, so to run the game with
+full models anywhere else, download the GLBs (e.g. from the Lovable editor)
+and drop them into `public/assets/`. Any model that can't be loaded renders
+as a simple placeholder shape — the game stays fully playable either way.
