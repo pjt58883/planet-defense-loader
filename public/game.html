@@ -2093,11 +2093,9 @@
   smokeGeo.setAttribute('palpha', new THREE.BufferAttribute(sAlpha, 1));
   smokeGeo.setDrawRange(0, 0);
 
-  const smokeMat = new THREE.ShaderMaterial({
-    uniforms: { uScale: { value: window.innerHeight * 0.5 } },
-    transparent: true,
-    depthWrite: false,
-    vertexShader: `
+  // shared by the smoke and the starfield: round soft points with
+  // per-particle colour, size and alpha
+  const POINT_VERT = `
       attribute vec3 pcolor;
       attribute float psize;
       attribute float palpha;
@@ -2110,8 +2108,8 @@
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         gl_PointSize = psize * (uScale / -mv.z);
         gl_Position = projectionMatrix * mv;
-      }`,
-    fragmentShader: `
+      }`;
+  const POINT_FRAG = `
       varying vec3 vCol;
       varying float vAlpha;
       void main() {
@@ -2119,13 +2117,63 @@
         float d = dot(c, c);
         if (d > 0.25) discard;
         gl_FragColor = vec4(vCol, vAlpha * (1.0 - smoothstep(0.02, 0.25, d)));
-      }`
+      }`;
+
+  const smokeMat = new THREE.ShaderMaterial({
+    uniforms: { uScale: { value: window.innerHeight * 0.5 } },
+    transparent: true,
+    depthWrite: false,
+    vertexShader: POINT_VERT,
+    fragmentShader: POINT_FRAG
   });
 
   const smoke = new THREE.Points(smokeGeo, smokeMat);
   smoke.frustumCulled = false;
   smoke.renderOrder = 2;
   world.add(smoke);
+
+  // ---------- starfield ----------
+  //  A thick shell of stars around the whole scene: near ones sweep past as
+  //  the camera orbits and far ones crawl, which is what sells the depth.
+  //  It hangs on the scene, not the world, so dragging the planet leaves
+  //  the sky fixed behind it, and the planet occludes it naturally.
+  const STAR_N = 1500;
+  const stPos = new Float32Array(STAR_N * 3);
+  const stCol = new Float32Array(STAR_N * 3);
+  const stSize = new Float32Array(STAR_N);
+  const stAlpha = new Float32Array(STAR_N);
+  for (let i = 0; i < STAR_N; i++) {
+    let x, y, z, l;
+    do {
+      x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1;
+      l = Math.hypot(x, y, z);
+    } while (l < 1e-4 || l > 1);
+    const r = 25 + Math.pow(Math.random(), 0.7) * 65;   // biased near, for parallax
+    stPos[i*3] = x / l * r; stPos[i*3+1] = y / l * r; stPos[i*3+2] = z / l * r;
+    const t = Math.random();
+    const c = t < 0.15 ? [0.72, 0.82, 1.0]              // blue-white
+            : t < 0.30 ? [1.0, 0.88, 0.72]              // warm
+            : [0.92, 0.94, 1.0];                        // neutral
+    const b = 0.7 + Math.random() * 0.3;
+    stCol[i*3] = c[0] * b; stCol[i*3+1] = c[1] * b; stCol[i*3+2] = c[2] * b;
+    stSize[i] = 0.22 + Math.random() * 0.65;
+    stAlpha[i] = 0.35 + Math.random() * 0.65;
+  }
+  const starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(stPos, 3));
+  starGeo.setAttribute('pcolor', new THREE.BufferAttribute(stCol, 3));
+  starGeo.setAttribute('psize', new THREE.BufferAttribute(stSize, 1));
+  starGeo.setAttribute('palpha', new THREE.BufferAttribute(stAlpha, 1));
+  const starMat = new THREE.ShaderMaterial({
+    uniforms: { uScale: { value: window.innerHeight * 0.5 } },
+    transparent: true,
+    depthWrite: false,
+    vertexShader: POINT_VERT,
+    fragmentShader: POINT_FRAG
+  });
+  const stars = new THREE.Points(starGeo, starMat);
+  stars.frustumCulled = false;
+  scene.add(stars);
 
   function puff(p, s0, s1, life, r, g, b, a) {
     const i = sCount < SMOKE_MAX ? sCount++ : (Math.random() * SMOKE_MAX) | 0;
@@ -3856,6 +3904,7 @@
 
   window.addEventListener('resize', () => {
     smokeMat.uniforms.uScale.value = window.innerHeight * 0.5;
+    starMat.uniforms.uScale.value = window.innerHeight * 0.5;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
