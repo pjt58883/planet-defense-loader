@@ -2609,7 +2609,12 @@
     // the dart flies the retired viper model; a dedicated dart.glb in
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
-    battery: ['/assets/battery.glb']
+    battery: ['/assets/battery.glb'],
+    // projectiles: the railgun slug (turrets, sea cannons) and the battery
+    // missile. Both are modelled standing on +Y and are laid onto -Z below.
+    slug:    ['/assets/railgun_ammo.glb'],
+    missile: ['/assets/missile_battery_ammo.glb']
+
   };
 
   //  Slots with no shipped GLB yet: they render as placeholders by design,
