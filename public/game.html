@@ -84,6 +84,16 @@
   .modal-row b{color:var(--ink);font-weight:400}
   .modal-row.bad b{color:#ff5f56}
   .modal-row.pay b{color:var(--hot)}
+  /* fleet warning: only present on the cards before a wave that adds a
+     mothership, and loud, because the answer to it costs a whole break */
+  .modal-warn{
+    display:none;
+    margin-top:14px;
+    color:#ff5f56;font-size:12px;letter-spacing:.18em;
+    text-transform:uppercase;
+    animation:hpPulse .9s ease-in-out infinite;
+  }
+  .modal-warn.on{display:block}
   .modal.open .modal-card{pointer-events:auto;visibility:visible}
   .modal-card button{margin-top:16px;width:100%}
 
@@ -322,6 +332,7 @@
       <div class="modal-row pay"><span>wave payout</span><b id="modalPay">0</b></div>
       <div class="modal-row"><span>next wave</span><b id="modalNext">2</b></div>
     </div>
+    <div class="modal-warn" id="modalWarn">⚠ another mothership warps in</div>
     <button id="modalBtn">Continue</button>
     <label class="check"><input type="checkbox" id="autoBox">autoplay: continue after 5s</label>
   </div>
@@ -2472,6 +2483,7 @@
   const rowLanded = document.getElementById('rowLanded');
   const modalPay = document.getElementById('modalPay');
   const modalNext = document.getElementById('modalNext');
+  const modalWarn = document.getElementById('modalWarn');
   let summaryUntil = 0;
 
   function showSummary(wave, landed, pay) {
@@ -2480,6 +2492,11 @@
     rowLanded.classList.toggle('bad', landed > 0);   // a clean wave should look clean
     modalPay.textContent = '+' + pay;
     modalNext.textContent = wave + 1;
+    // the coming wave is already decided, so the card can warn about it:
+    // a growing fleet is the one thing worth spending the break answering
+    const ships = shipCountFor(wave + 1);
+    modalWarn.textContent = '⚠ mothership ' + ships + ' warps in';
+    modalWarn.classList.toggle('on', ships > shipCountFor(wave));
     waveModal.classList.add('open');
     G.paused = true;                                 // the break stops here
     // autoplay just means the card dismisses itself; without it the game
