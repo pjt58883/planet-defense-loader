@@ -624,6 +624,9 @@
     tiles = buildTiles(FREQS[freqIdx], RADIUS);
     const N = tiles.cells.length;
     cellType = new Array(N).fill('plain');
+    cellDead = new Uint8Array(N);
+    deadPos.length = 0;
+    rebuildDeadMesh();
     cellGeo = new Array(N);
     coast = new Array(N).fill(false);
     cornerLand = new Map();
@@ -1720,6 +1723,65 @@
     if (modelsOK) { gunMesh.count = guns; gunMesh.instanceMatrix.needsUpdate = true; }
   }
 
+  // ---------- dead ground ----------
+  //  A landing kills its hex for the rest of the run: whatever stood there
+  //  is lost, the tile is crossed out in red, and nothing can be built on
+  //  it again. Dead ground is the scar a wave leaves behind - integrity
+  //  heals nothing back, so the map itself keeps the score.
+  let cellDead = null;                 // one flag per cell, set by landings
+  const deadPos = [];                  // accumulated X-marker triangles
+  let deadMesh = null;
+  const deadMat = new THREE.MeshBasicMaterial({
+    color: 0xff2f2f, transparent: true, opacity: 0.9,
+    depthWrite: false, side: THREE.DoubleSide
+  });
+
+  function rebuildDeadMesh() {
+    if (deadMesh) { world.remove(deadMesh); deadMesh.geometry.dispose(); deadMesh = null; }
+    if (!deadPos.length) return;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(deadPos), 3));
+    deadMesh = new THREE.Mesh(g, deadMat);
+    deadMesh.frustumCulled = false;
+    world.add(deadMesh);
+  }
+
+  function killHex(ci) {
+    if (cellDead[ci]) return;
+    cellDead[ci] = 1;
+
+    const f = tileFit(ci);
+    const up = f.up;
+    const e1 = new THREE.Vector3(0, 0, 1);
+    if (Math.abs(up.z) > 0.9) e1.set(1, 0, 0);
+    e1.addScaledVector(up, -e1.dot(up)).normalize();
+    const e2 = new THREE.Vector3().crossVectors(up, e1);
+
+    // two bars at right angles; each is a short strip of quads projected
+    // back onto the sphere so the X hugs the ground instead of chording it
+    const L = f.fit * 0.82, W = f.fit * 0.16, SEG = 6;
+    const dir = new THREE.Vector3(), side = new THREE.Vector3();
+    for (const ang of [Math.PI / 4, -Math.PI / 4]) {
+      dir.copy(e1).multiplyScalar(Math.cos(ang)).addScaledVector(e2, Math.sin(ang));
+      side.crossVectors(up, dir).normalize();
+      const p = (t, w) => new THREE.Vector3().copy(up).multiplyScalar(RADIUS)
+        .addScaledVector(dir, t).addScaledVector(side, w).setLength(RADIUS * 1.004);
+      for (let s = 0; s < SEG; s++) {
+        const t0 = -L + (2 * L * s) / SEG, t1 = -L + (2 * L * (s + 1)) / SEG;
+        const a = p(t0, -W), b = p(t0, W), c = p(t1, W), d = p(t1, -W);
+        deadPos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z,
+                     a.x, a.y, a.z, c.x, c.y, c.z, d.x, d.y, d.z);
+      }
+    }
+    rebuildDeadMesh();
+  }
+
+  function clearDead() {
+    if (cellDead) cellDead.fill(0);
+    deadPos.length = 0;
+    rebuildDeadMesh();
+  }
+
   // ---------- descending drops ----------
   const MAX_ALIENS = 400;
   //  Model length per enemy type, in model units. Placeholders are built to
@@ -2324,7 +2386,9 @@
         a.alive = false;
         G.landed++;
         G.hp -= a.dmg;
-        say(demolish(a.ci) || 'BREACH');
+        const lost = demolish(a.ci);
+        killHex(a.ci);
+        say(lost || 'HEX DESTROYED');
         if (G.hp <= 0) { G.hp = 0; loseGame(); }
       }
     }
@@ -2869,6 +2933,7 @@
       else hideUnitCard();
       return;
     }
+    if (cellDead[ci]) { say('DEAD GROUND'); return; }
     // a fighter is based on a tile, not built on it, so it can sit over water
     const wet = cellType[ci] === 'lake';
     if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
@@ -2958,8 +3023,8 @@
     clearFighters();
     clearFoundries();
     clearEnemies();
+    clearDead();
     resetBullets();
-
     sCount = 0;
     smokeGeo.setDrawRange(0, 0);
     G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0;
