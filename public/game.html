@@ -1698,8 +1698,8 @@
   //  the viper's length so the size maths is identical either way; when a
   //  real hulk or dart GLB lands in public/assets, measure it and update
   //  its entry here.
-  const ENEMY_LEN = { viper: 1.884, hulk: 1.884, dart: 1.884 };
-  const VIPER_LEN = ENEMY_LEN.viper;
+  const ENEMY_LEN = { viper: 1.898, hulk: 1.884, dart: 1.884 };
+  const VIPER_LEN = 1.884;           // placeholder cones are built to this
 
   // one instanced mesh per enemy type, all drawn from the same alien list
   function protoEnemyMesh(color, emissive) {
@@ -2572,7 +2572,10 @@
     jet:     ['/assets/jet.glb',     '/__l5e/assets-v1/aa131bb3-9b03-4489-b483-5ab9fe50aa00/jet.glb'],
     foundry: ['/assets/foundry.glb', '/__l5e/assets-v1/9da45853-b69f-416c-9044-3847846ee13c/foundry.glb'],
     mother:  ['/assets/mother.glb',  '/__l5e/assets-v1/a43bfc6e-27db-4579-b762-be7ff49cf039/mother.glb'],
-    viper:   ['/assets/viper.glb',   '/__l5e/assets-v1/946d2261-e618-49a3-a170-f8d9d8d00e20/viper.glb'],
+    // the descending enemy flies the dropship; the old viper stays behind
+    // it as a fallback (decimated from the 33 MB source export, nose baked
+    // onto -Z - regenerate via gltf-transform if the source changes)
+    viper:   ['/assets/dropship.glb', '/assets/viper.glb'],
     hover:   ['/assets/hover.glb',   '/__l5e/assets-v1/7b7459ce-3d39-4b07-9493-11655f707cfa/hover.glb'],
     core:    ['/assets/core.glb',    '/__l5e/assets-v1/6bce7fea-818f-4d63-b513-fa4f5cfa1d57/core.glb'],
     hulk:    ['/assets/hulk.glb'],
