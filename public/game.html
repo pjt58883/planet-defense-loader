@@ -2669,6 +2669,15 @@
         geo = new THREE.CylinderGeometry(BATTERY_R * 0.55, BATTERY_R, BATTERY_H, 6);
         geo.translate(0, BATTERY_H / 2, 0);             // base at y=0
         color = 0x7d8a5a; break;
+      // projectiles: modelled standing on +Y like their GLBs, ~2 units long,
+      // so buildModels can lay either one onto -Z with the same rotation
+      case 'slug':
+        geo = new THREE.ConeGeometry(0.16, 1.9, 6);
+        color = 0xffd9a0; break;
+      case 'missile':
+        geo = new THREE.ConeGeometry(0.37, 1.9, 6);
+        color = 0xffb060; break;
+
       default:  // core
         geo = new THREE.CylinderGeometry(CORE_R * 0.7, CORE_R, CORE_SEAT, 8);
         geo.translate(0, CORE_SEAT / 2, 0);
