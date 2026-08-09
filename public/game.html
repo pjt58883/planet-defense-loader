@@ -258,6 +258,59 @@
     align-items:center;
     flex-wrap:wrap;
   }
+
+  /* the shop: image buttons stacked down the right edge, cost beside art */
+  .buildbar{
+    right:20px;top:50%;transform:translateY(-50%);
+    display:flex;flex-direction:column;gap:9px;
+    pointer-events:auto;
+  }
+  .buy{
+    display:flex;align-items:center;gap:10px;
+    padding:5px 12px 5px 6px;
+  }
+  .buy img{
+    width:46px;height:46px;display:block;
+    object-fit:contain;
+  }
+  .buy .cost{
+    font-size:15px;color:var(--hot);
+    font-variant-numeric:tabular-nums;letter-spacing:.08em;
+  }
+  .buy[aria-pressed="true"] .cost{color:var(--void)}
+
+  /* the one button that starts trouble on purpose: front and centre,
+     sized like the integrity/gold readouts so it cannot be missed */
+  .hud.bc{bottom:26px;left:50%;transform:translateX(-50%)}
+  .nextwave{
+    pointer-events:auto;
+    font-size:22px;letter-spacing:.24em;
+    padding:13px 30px;
+  }
+
+  /* the catalog: every unit on both sides, with its art and its job */
+  .catalog-card{min-width:400px;max-width:480px;text-align:left}
+  .catalog-title{
+    font-size:20px;letter-spacing:.30em;color:var(--hot);
+    text-transform:uppercase;text-align:center;
+  }
+  .catalog-list{
+    margin-top:14px;max-height:60vh;overflow-y:auto;
+    display:flex;flex-direction:column;gap:12px;padding-right:6px;
+  }
+  .cat-side{
+    color:var(--hot);font-size:12px;letter-spacing:.22em;
+    text-transform:uppercase;margin-top:6px;
+  }
+  .cat-row{display:flex;gap:12px;align-items:center}
+  .cat-row img{width:52px;height:52px;flex:none;object-fit:contain}
+  .cat-name{
+    color:var(--ink);font-size:12px;letter-spacing:.14em;
+    text-transform:uppercase;
+  }
+  .cat-name b{color:var(--hot);font-weight:400;margin-left:8px}
+  .cat-desc{color:var(--ink-dim);font-size:12px;line-height:1.55;margin-top:3px}
+  #catalogClose{margin-top:14px;width:100%}
   button{
     font:inherit;
     font-size:11px;
@@ -301,6 +354,11 @@
     .start-title{font-size:19px;letter-spacing:.22em}
     .sizes button{padding:8px 4px}
     .hplabel{font-size:20px;letter-spacing:.14em}
+    .buildbar{right:10px;gap:6px}
+    .buy img{width:36px;height:36px}
+    .nextwave{font-size:17px;padding:11px 20px}
+    .hud.bc{bottom:16px}
+    .catalog-card{min-width:0;width:92vw}
     .hpbar::after{background:repeating-linear-gradient(90deg,
       rgba(0,0,0,0) 0 14px, rgba(0,0,0,.55) 14px 16px)}
     button{padding:11px 12px}
@@ -321,6 +379,7 @@
     <div class="menu-panel" id="menuPanel">
       <button id="randBtn">New world</button>
       <button id="gridBtn">Grid: 362</button>
+      <button id="catalogBtn">Catalog</button>
       <span class="count" id="count"></span>
     </div>
   </div>
@@ -329,15 +388,22 @@
 <div class="hud bl">
   <div class="hint gone" id="hint"></div>
   <div class="bar">
-    <button id="buildBtn">Build turret (5)</button>
-    <button id="jetBtn">Build fighter (10)</button>
-    <button id="foundryBtn">Build foundry (20)</button>
-    <button id="cannonBtn">Build sea cannon (12)</button>
-    <button id="batteryBtn">Build missile battery (18)</button>
-    <button id="recoveryBtn">Build recovery team (15)</button>
-    <button id="waveBtn">Call wave</button>
     <button id="viewBtn">Surface view</button>
   </div>
+</div>
+
+<!-- the shop: one image button per buildable, cost beside the picture -->
+<div class="hud buildbar">
+  <button id="buildBtn" class="buy" title="Railgun turret"><img id="img-turret" alt="Railgun turret"><span class="cost">5</span></button>
+  <button id="jetBtn" class="buy" title="Fighter"><img id="img-jet" alt="Fighter"><span class="cost">10</span></button>
+  <button id="cannonBtn" class="buy" title="Sea cannon"><img id="img-cannon" alt="Sea cannon"><span class="cost">12</span></button>
+  <button id="batteryBtn" class="buy" title="Missile battery"><img id="img-battery" alt="Missile battery"><span class="cost">18</span></button>
+  <button id="foundryBtn" class="buy" title="Foundry"><img id="img-foundry" alt="Foundry"><span class="cost">20</span></button>
+  <button id="recoveryBtn" class="buy" title="Recovery team"><img id="img-recovery" alt="Recovery team"><span class="cost">15</span></button>
+</div>
+
+<div class="hud bc">
+  <button id="waveBtn" class="nextwave">Next Wave</button>
 </div>
 
 <div class="modal open" id="startModal">
@@ -375,6 +441,14 @@
   <div class="unit-row" id="unitRateRow"><span>attack speed</span><b id="unitRate"></b></div>
   <div class="unit-row"><span>level</span><b id="unitLvl"></b></div>
   <button id="unitUpgBtn">Upgrade</button>
+</div>
+
+<div class="modal" id="catalogModal">
+  <div class="modal-card catalog-card">
+    <div class="catalog-title">Catalog</div>
+    <div class="catalog-list" id="catalogList"></div>
+    <button id="catalogClose">Close</button>
+  </div>
 </div>
 
 <div class="hud tc">
@@ -3025,6 +3099,15 @@
   const waveBtn = document.getElementById('waveBtn');
   let alertUntil = 0;
 
+  // the shop buttons carry their price beside the art
+  for (const [id, cost] of [['buildBtn', BAL.turretCost], ['jetBtn', BAL.jetCost],
+       ['cannonBtn', BAL.cannonCost], ['batteryBtn', BAL.batteryCost],
+       ['foundryBtn', BAL.foundryCost], ['recoveryBtn', BAL.recoveryCost]]) {
+    const b = document.getElementById(id);
+    b.querySelector('.cost').textContent = cost;
+    b.title += ' (' + cost + ' gold)';
+  }
+
   function say(msg, sticky) {
     alertEl.textContent = msg;
     alertEl.classList.remove('quiet');
@@ -3044,16 +3127,11 @@
     const left = Math.max(0, Math.ceil(G.breakLeft - 1e-6));
     nextVal.textContent = G.over ? '\u2014' : G.inWave ? 'inbound' : left + 's';
     nextStat.classList.toggle('soon', !G.over && !G.inWave && left <= 5);
-    buildBtn.textContent = 'Build turret (' + BAL.turretCost + ')';
-    jetBtn.textContent = 'Build fighter (' + BAL.jetCost + ')';
-    foundryBtn.textContent = 'Build foundry (' + BAL.foundryCost + ')';
-    cannonBtn.textContent = 'Build sea cannon (' + BAL.cannonCost + ')';
+    waveBtn.disabled = G.inWave || G.over;
     cannonBtn.disabled = G.gold < BAL.cannonCost && G.build !== 'cannon';
     cannonBtn.setAttribute('aria-pressed', G.build === 'cannon' ? 'true' : 'false');
-    batteryBtn.textContent = 'Build missile battery (' + BAL.batteryCost + ')';
     batteryBtn.disabled = G.gold < BAL.batteryCost && G.build !== 'battery';
     batteryBtn.setAttribute('aria-pressed', G.build === 'battery' ? 'true' : 'false');
-    recoveryBtn.textContent = 'Build recovery team (' + BAL.recoveryCost + ')';
     recoveryBtn.disabled = G.gold < BAL.recoveryCost && G.build !== 'recovery';
     recoveryBtn.setAttribute('aria-pressed', G.build === 'recovery' ? 'true' : 'false');
     if (selCi !== null) refreshUnitCard();
@@ -3202,7 +3280,13 @@
   });
 
   document.getElementById('modalBtn').addEventListener('click', hideSummary);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hideSummary(); hideUnitCard(); } });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      hideSummary();
+      hideUnitCard();
+      document.getElementById('catalogModal').classList.remove('open');
+    }
+  });
 
   // ---------- unit card ----------
   //  Tap one of your buildings (with no build mode armed) and this pops up
@@ -3474,6 +3558,135 @@
     }
   }
 
+  // ---------- catalog & button art ----------
+  //
+  //  Every button and catalog entry shows the unit's real model: each rig
+  //  is assembled from the loaded parts and rendered once to a small
+  //  canvas. Hand-made art dropped into public/assets/ui/<key>.png wins
+  //  over the live render.
+  const thumbs = {};
+
+  function setArt(img, key) {
+    img.onerror = () => { img.onerror = null; img.src = thumbs[key]; };
+    img.src = '/assets/ui/' + key + '.png';
+  }
+
+  function makeThumbs(parts) {
+    const r = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    r.setSize(128, 128);
+    r.outputEncoding = THREE.sRGBEncoding;
+    const sc = new THREE.Scene();
+    sc.add(new THREE.HemisphereLight(0xcfe0ff, 0x333322, 0.9));
+    const sun = new THREE.DirectionalLight(0xfff0dd, 1.5);
+    sun.position.set(3, 5, 4);
+    sc.add(sun);
+    const cam = new THREE.PerspectiveCamera(35, 1, 0.01, 100);
+
+    const part = (p, s, y) => {
+      const m = new THREE.Mesh(p.geo, p.mat);
+      if (s) m.scale.setScalar(s);
+      if (y) m.position.y = y;
+      return m;
+    };
+    const kc = PLAT_R * CORE_FIT / CORE_R;
+    const RIGS = {
+      turret:   () => [part(parts.pad), part(parts.gun, 1, GUN_SEAT)],
+      battery:  () => [part(parts.pad), part(parts.battery, PAD_R / BATTERY_R, GUN_SEAT)],
+      cannon:   () => [part(parts.hover), part(parts.core, kc, PLAT_DECK),
+                       part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
+      jet:      () => [part(parts.jet)],
+      foundry:  () => [part(parts.foundry)],
+      recovery: () => [part(parts.recovery)],
+      dropship: () => [part(parts.viper)],
+      dart:     () => [part(parts.dart)],
+      hulk:     () => [part(parts.hulk)],
+      mothership: () => [part(parts.mother)]
+    };
+    const box = new THREE.Box3(), sph = new THREE.Sphere();
+    for (const k in RIGS) {
+      const g = new THREE.Group();
+      for (const m of RIGS[k]()) g.add(m);
+      sc.add(g);
+      box.setFromObject(g).getBoundingSphere(sph);
+      const d = sph.radius * 2.7;
+      cam.position.set(sph.center.x + d * 0.62, sph.center.y + d * 0.42, sph.center.z + d * 0.66);
+      cam.lookAt(sph.center);
+      r.render(sc, cam);
+      thumbs[k] = r.domElement.toDataURL();
+      sc.remove(g);
+    }
+    r.dispose();
+
+    for (const [id, k] of [['img-turret', 'turret'], ['img-jet', 'jet'],
+         ['img-cannon', 'cannon'], ['img-battery', 'battery'],
+         ['img-foundry', 'foundry'], ['img-recovery', 'recovery']]) {
+      setArt(document.getElementById(id), k);
+    }
+    buildCatalog();
+  }
+
+  //  What each thing is FOR, in one breath apiece.
+  const CATALOG = [
+    ['side', 'Your forces'],
+    ['turret', 'Railgun Turret', BAL.turretCost,
+     'The line gun. Leads its shots and slews fast; mountains stretch its reach and ceiling.'],
+    ['jet', 'Fighter', BAL.jetCost,
+     'Patrols a circle around its base hex and dives on anything inside it. Based, not built - it shares its hex with a tower. Darts hunt it.'],
+    ['cannon', 'Sea Cannon', BAL.cannonCost,
+     'The water build: a floating railgun with longer reach, a heavier slug and a higher ceiling than a land turret.'],
+    ['battery', 'Missile Battery', BAL.batteryCost,
+     'Slow homing missiles that burst on impact and splash everything nearby. Engages highest of all; the launcher swings heavy.'],
+    ['foundry', 'Foundry', BAL.foundryCost,
+     'Pays gold every wave cleared, scaled by its ground - mountains best, swamp worst. A hole in the defence that pays for more of it.'],
+    ['recovery', 'Recovery Team', BAL.recoveryCost,
+     'The only thing that builds on dead ground. Digs a crossed-out tile back out, one wave of work per wave it has been lost, and defends itself with sidearms.'],
+    ['side', 'The enemy'],
+    ['dropship', 'Dropship', null,
+     'The line trooper. Falls from its mothership toward a telegraphed tile; anything that lands kills the hex under it.'],
+    ['dart', 'Dart', null,
+     'Fast interceptor. Hunts your fighters inside its own landing zone before landing; only a clear sky sends it groundward.'],
+    ['hulk', 'Hulk', null,
+     'Armoured transport behind an energy shield. The shield falls at half health, and a landed hulk hits the ground twice as hard.'],
+    ['mothership', 'Mothership', null,
+     'Holds station off-planet and launches the wave into its drop zone. More arrive as the waves go on, each picking its own bearing.']
+  ];
+
+  function buildCatalog() {
+    const list = document.getElementById('catalogList');
+    list.innerHTML = '';
+    for (const e of CATALOG) {
+      if (e[0] === 'side') {
+        const h = document.createElement('div');
+        h.className = 'cat-side';
+        h.textContent = e[1];
+        list.appendChild(h);
+        continue;
+      }
+      const row = document.createElement('div');
+      row.className = 'cat-row';
+      const img = document.createElement('img');
+      img.alt = e[1];
+      setArt(img, e[0]);
+      const txt = document.createElement('div');
+      const name = document.createElement('div');
+      name.className = 'cat-name';
+      name.textContent = e[1];
+      if (e[2] !== null) {
+        const b = document.createElement('b');
+        b.textContent = e[2] + ' gold';
+        name.appendChild(b);
+      }
+      const desc = document.createElement('div');
+      desc.className = 'cat-desc';
+      desc.textContent = e[3];
+      txt.appendChild(name);
+      txt.appendChild(desc);
+      row.appendChild(img);
+      row.appendChild(txt);
+      list.appendChild(row);
+    }
+  }
+
   const startBtn = document.getElementById('startBtn');
 
   async function loadModels() {
@@ -3498,6 +3711,7 @@
       parts[n] = placeholderPart(n);
     }));
     buildModels(parts);
+    makeThumbs(parts);
     if (missing.length) console.warn('models missing, using placeholders:', missing.join(', '));
     const gone = missing.filter(n => !OPTIONAL_MODELS.has(n));
     if (gone.length) say('MODELS MISSING: ' + gone.join(', ').toUpperCase(), true);
@@ -3546,6 +3760,14 @@
   menuPanel.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', () => setMenu(false));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setMenu(false); });
+
+  // ---------- catalog ----------
+  const catalogModal = document.getElementById('catalogModal');
+  document.getElementById('catalogBtn').addEventListener('click', () => {
+    setMenu(false);
+    catalogModal.classList.add('open');
+  });
+  document.getElementById('catalogClose').addEventListener('click', () => catalogModal.classList.remove('open'));
 
   // ---------- picking ----------
   const raycaster = new THREE.Raycaster();
