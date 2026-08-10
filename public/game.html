@@ -3736,7 +3736,12 @@
       dropship: () => [part(parts.viper)],
       dart:     () => [part(parts.dart)],
       hulk:     () => [part(parts.hulk)],
-      dread:    () => [part(parts.dread)],
+      dread:    () => {
+        const gun = part(parts.dreadgun, DREAD_GUN_K);
+        gun.position.y = -DREAD_GUN_DROP;
+        gun.rotation.x = -Math.PI / 2;                 // barrel pointing down, at rest
+        return [part(parts.dread), gun];
+      },
       mothership: () => [part(parts.mother)]
     };
     const box = new THREE.Box3(), sph = new THREE.Sphere();
