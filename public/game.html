@@ -1567,7 +1567,7 @@
   // =====================================================================
   const satellites = [];
   const satAt = new Map();
-  const SAT_LEN = 1.6;         // placeholder panel bar length, model units
+  const SAT_LEN = 1.9;         // sentinel's widest extent, model units
   let satMesh = null, satOutline = null;
   const sQ = new THREE.Quaternion();
 
@@ -3810,7 +3810,7 @@
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
     // the fighter's landing pad, marking the hex it is based from
     jetpad:  ['/assets/jetpad.glb'],
-    // the recon satellite; a placeholder solar bar until sat.glb lands
+    // the recon satellite: the orbital cube sentinel
     sat:     ['/assets/sat.glb'],
     // the dreadnaught: hull and the bombardment cannon slung under it. The
     // cannon is a separate part so it can slew onto its target in flight.
@@ -3829,7 +3829,7 @@
   //  Slots with no shipped GLB yet render as placeholders by design, so a
   //  missing file is expected and not worth an on-screen warning. New units
   //  sit here until their GLB lands in public/assets.
-  const OPTIONAL_MODELS = new Set(['sat']);
+  const OPTIONAL_MODELS = new Set([]);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
