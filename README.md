@@ -37,7 +37,7 @@ and drop them into `public/assets/`. Any model that can't be loaded renders
 as a simple placeholder shape — the game stays fully playable either way.
 
 Two slots have no shipped model yet and use placeholders by design:
-`dart.glb` (the dart flies the retired viper model) and `dread.glb` (the
-dreadnaught flies a placeholder slab). Drop a GLB with that name into
-`public/assets/` to fill one, and update its measured length constant in
-`game.html` (`ENEMY_LEN`).
+`dart.glb` (the dart flies the retired viper model) and `jetpad.glb`
+(the fighter's landing pad renders as a flat slab). Drop a GLB with that
+name into `public/assets/` to fill one, and update its measured constant
+in `game.html` (`ENEMY_LEN` for enemies, `JETPAD_R` for the pad).

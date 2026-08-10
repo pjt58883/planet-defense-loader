@@ -1437,8 +1437,12 @@
   const fighters = [];
   const fighterAt = new Map();
   const JET_LEN = 1.898;
+  //  The landing pad that marks a fighter's home hex. The placeholder is a
+  //  flat slab spanning the tile; when jetpad.glb lands in public/assets,
+  //  measure its widest footprint radius and update JETPAD_R to match.
+  const JETPAD_R = 1.0;
 
-  let jetMesh = null, jetOutlineMesh = null;
+  let jetMesh = null, jetOutlineMesh = null, jetpadMesh = null, jetpadOutline = null;
 
   const fA1 = new THREE.Vector3(), fA2 = new THREE.Vector3(), fWant = new THREE.Vector3(),
         fAxis = new THREE.Vector3(), fQ = new THREE.Quaternion(), fPos = new THREE.Vector3(),
@@ -1484,6 +1488,11 @@
       vel: head.clone(),
       emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
     };
+    // the pad that claims the hex, laid flat on the tile like a turret's
+    mPos.copy(home).multiplyScalar(RADIUS - f0.fit * 0.04);
+    mQuat.setFromUnitVectors(LOCAL_UP, home);
+    mScale.setScalar(f0.fit / JETPAD_R);
+    jf.padMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
     fighters.push(jf);
     fighterAt.set(ci, jf);
     if (jetMesh) jetMesh.count = fighters.length;
@@ -1495,6 +1504,7 @@
     fighterAt.clear();
     if (jetMesh) jetMesh.count = 0;
     if (jetOutlineMesh) jetOutlineMesh.count = 0;
+    if (jetpadMesh) { jetpadMesh.count = 0; jetpadOutline.count = 0; }
   }
 
   function updateFighters(dt) {
@@ -1507,6 +1517,14 @@
       }
     }
     if (jetMesh) jetMesh.count = fighters.length;
+
+    // every based fighter parks its landing pad on its home hex
+    if (jetpadMesh) {
+      for (let i = 0; i < fighters.length; i++) jetpadMesh.setMatrixAt(i, fighters[i].padMat);
+      jetpadMesh.count = fighters.length;
+      jetpadMesh.instanceMatrix.needsUpdate = true;
+      mirrorOutline(jetpadMesh, jetpadOutline);
+    }
 
     for (let i = 0; i < fighters.length; i++) {
       const f = fighters[i];
@@ -1637,8 +1655,9 @@
     }
   }
 
-  //  A landing flattens EVERYTHING on the tile: a hex can host a tower and
-  //  base a fighter at once, and both die with the ground under them.
+  //  A landing flattens EVERYTHING on the tile. Since the landing pad, a
+  //  hex holds one occupant, but the sweep stays general so old saves or
+  //  future stacking cannot leak a survivor.
   function demolish(ci) {
     const lost = [];
     if (towerAt.has(ci)) {
@@ -3539,6 +3558,8 @@
     // the dart flies the retired viper model; a dedicated dart.glb in
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
+    // the fighter's landing pad, marking the hex it is based from
+    jetpad:  ['/assets/jetpad.glb'],
     // the dreadnaught: hull and the bombardment cannon slung under it. The
     // cannon is a separate part so it can slew onto its target in flight.
     dread:    ['/assets/dread.glb'],
@@ -3556,7 +3577,7 @@
   //  Slots with no shipped GLB yet render as placeholders by design, so a
   //  missing file is expected and not worth an on-screen warning. New units
   //  sit here until their GLB lands in public/assets.
-  const OPTIONAL_MODELS = new Set();
+  const OPTIONAL_MODELS = new Set(['jetpad']);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
@@ -3576,6 +3597,10 @@
         geo = new THREE.ConeGeometry(JET_LEN * 0.22, JET_LEN, 6);
         geo.rotateX(-Math.PI / 2);                      // nose down -Z
         color = 0xd0d6df; break;
+      case 'jetpad':                                    // flat square deck, base at y=0
+        geo = new THREE.BoxGeometry(JETPAD_R * 2, 0.16, JETPAD_R * 2);
+        geo.translate(0, 0.08, 0);
+        color = 0x55606e; break;
       case 'mother':
         geo = new THREE.CylinderGeometry(MOTHER_LEN * 0.18, MOTHER_LEN * 0.26, MOTHER_LEN, 8);
         geo.rotateX(-Math.PI / 2);                      // long axis on Z, nose -Z
@@ -3659,6 +3684,13 @@
     if (rbb) parts.recovery.geo.translate(0, -rbb.min.y, 0);
     recoveryMesh = instanced(parts.recovery, MAX_TURRETS, false);
     rebuildRecoveryMesh();
+
+    // the fighter's landing pad: base at y=0 like the other ground plates
+    parts.jetpad.geo.computeBoundingBox();
+    const jpb = parts.jetpad.geo.boundingBox;
+    if (jpb) parts.jetpad.geo.translate(0, -jpb.min.y, 0);
+    jetpadMesh = instanced(parts.jetpad, MAX_TURRETS, true);
+    jetpadOutline = makeAllyOutline(parts.jetpad.geo, MAX_TURRETS);
 
     // green twins for everything the player builds
     padOutline = makeAllyOutline(parts.pad.geo, MAX_TURRETS);
@@ -3787,7 +3819,7 @@
       battery:  () => [part(parts.pad), part(parts.battery, PAD_R / BATTERY_R, GUN_SEAT)],
       cannon:   () => [part(parts.hover), part(parts.core, kc, PLAT_DECK),
                        part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
-      jet:      () => [part(parts.jet)],
+      jet:      () => [part(parts.jetpad), part(parts.jet, 1, 0.85)],
       recovery: () => [part(parts.recovery)],
       dropship: () => [part(parts.viper)],
       dart:     () => [part(parts.dart)],
@@ -3829,7 +3861,7 @@
     ['turret', 'Railgun Turret', BAL.turretCost,
      'The line gun. Leads its shots and slews fast; mountains stretch its reach and ceiling.'],
     ['jet', 'Fighter', BAL.jetCost,
-     'Patrols a circle around its base hex and dives on anything inside it. Based, not built - it shares its hex with a tower. Darts hunt it.'],
+     'Patrols a circle around its base hex and dives on anything inside it. Its landing pad claims the hex it flies from. Darts hunt it.'],
     ['cannon', 'Sea Cannon', BAL.cannonCost,
      'The water build: a floating railgun with longer reach, a heavier slug and a higher ceiling than a land turret.'],
     ['battery', 'Missile Battery', BAL.batteryCost,
@@ -4019,11 +4051,12 @@
     const wet = cellType[ci] === 'lake';
     if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
     if (!wet && G.build === 'cannon') { say('SEA CANNON NEEDS WATER'); return; }
-    // a fighter is BASED on a hex, not built on it: it neither blocks a
-    // tower nor is blocked by one. Only a second fighter is refused.
+    // a fighter's landing pad claims its hex outright now: pad and tower
+    // can no longer share a tile
     if (G.build === 'fighter') {
       if (fighterAt.has(ci)) { say('FIGHTER ALREADY BASED HERE'); return; }
-    } else if (towerAt.has(ci)) {
+      if (towerAt.has(ci)) { say('TILE OCCUPIED'); return; }
+    } else if (towerAt.has(ci) || fighterAt.has(ci)) {
       say('TILE OCCUPIED'); return;
     }
 
