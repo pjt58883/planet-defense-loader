@@ -1437,10 +1437,11 @@
   const fighters = [];
   const fighterAt = new Map();
   const JET_LEN = 1.898;
-  //  The landing pad that marks a fighter's home hex. The placeholder is a
-  //  flat slab spanning the tile; when jetpad.glb lands in public/assets,
-  //  measure its widest footprint radius and update JETPAD_R to match.
-  const JETPAD_R = 1.0;
+  //  The landing pad that marks a fighter's home hex: the modular road
+  //  platform deck in jetpad.glb, measured at its widest footprint radius
+  //  (half its long axis) so it spans the tile edge to edge.
+  const JETPAD_R = 0.952;
+
 
   let jetMesh = null, jetOutlineMesh = null, jetpadMesh = null, jetpadOutline = null;
 
