@@ -443,6 +443,16 @@
   </div>
 </div>
 
+<!-- the loss card: the run's obituary, and the way back in -->
+<div class="modal" id="lossModal">
+  <div class="modal-card wave-card">
+    <div class="wc-line on wc-title" style="color:#ff5f56">Planet Lost</div>
+    <div class="wc-line on wc-stat">Waves Survived: <b id="lossWaves">0</b></div>
+    <div class="wc-line on wc-stat">Gold Spent: <b id="lossSpent">0</b></div>
+    <button class="wc-line on wc-continue" id="lossBtn">Start Over</button>
+  </div>
+</div>
+
 <div class="unitcard" id="unitCard">
   <div class="unit-name" id="unitName">Turret</div>
   <div class="unit-row" id="unitDmgRow"><span id="unitDmgLabel">damage</span><b id="unitDmg"></b></div>
@@ -1045,7 +1055,7 @@
     inWave: false, breakLeft: 20, spawnTimer: 0, queue: [],
     ready: false, over: false, started: false, paused: false,
     build: null, bearing: null, nextComp: null,
-    shipDist: 1.55, landed: 0, ships: []
+    shipDist: 1.55, landed: 0, spent: 0, ships: []
   };
 
   // Every number that decides whether the game is fair lives here and nowhere
@@ -3440,6 +3450,10 @@
     resetBullets();
     hideMothers();
     say('PLANET LOST \u00B7 NEW WORLD TO RESTART', true);
+    // the obituary: the wave that killed you was not survived
+    document.getElementById('lossWaves').textContent = Math.max(0, G.wave - 1);
+    document.getElementById('lossSpent').textContent = Math.round(G.spent);
+    document.getElementById('lossModal').classList.add('open');
   }
 
   // ---------- readouts ----------
@@ -3466,6 +3480,13 @@
     const b = document.getElementById(id);
     b.querySelector('.cost').textContent = cost;
     b.title += ' (' + cost + ' gold)';
+  }
+
+  // every purchase and upgrade goes through here, so the loss card can
+  // say what the whole defence effort cost
+  function spend(n) {
+    G.gold -= n;
+    G.spent += n;
   }
 
   function say(msg, sticky) {
@@ -3651,11 +3672,18 @@
   });
 
   document.getElementById('modalBtn').addEventListener('click', hideSummary);
+  // the way back in: same world, fresh run
+  document.getElementById('lossBtn').addEventListener('click', () => {
+    document.getElementById('lossModal').classList.remove('open');
+    resetGame();
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       hideSummary();
       hideUnitCard();
       document.getElementById('catalogModal').classList.remove('open');
+      // dismissable without restarting: the menu's new-world path remains
+      document.getElementById('lossModal').classList.remove('open');
     }
   });
 
@@ -4281,7 +4309,7 @@
       if (recoveryAt.has(ci)) { say('TEAM ALREADY WORKING'); return; }
       if (recoveries.length >= MAX_TURRETS) { say('RECOVERY LIMIT REACHED'); return; }
       if (G.gold < BAL.recoveryCost) { say('NOT ENOUGH GOLD'); return; }
-      G.gold -= BAL.recoveryCost;
+      spend(BAL.recoveryCost);
       const r = placeRecovery(ci);
       if (r) say('RECOVERY IN ' + r.need + (r.need === 1 ? ' WAVE' : ' WAVES'));
       return;
@@ -4301,34 +4329,34 @@
     if (G.build === 'sat') {
       if (G.gold < BAL.satCost) { say('NOT ENOUGH GOLD'); return; }
       if (!placeSat(ci)) { say('SATELLITE LIMIT REACHED'); return; }
-      G.gold -= BAL.satCost;
+      spend(BAL.satCost);
       return;
     }
 
     if (G.build === 'cannon') {
       if (G.gold < BAL.cannonCost) { say('NOT ENOUGH GOLD'); return; }
       if (!placeCannon(ci)) { say('CANNON LIMIT REACHED'); return; }
-      G.gold -= BAL.cannonCost;
+      spend(BAL.cannonCost);
       return;
     }
 
     if (G.build === 'battery') {
       if (G.gold < BAL.batteryCost) { say('NOT ENOUGH GOLD'); return; }
       if (!placeBattery(ci)) { say('BATTERY LIMIT REACHED'); return; }
-      G.gold -= BAL.batteryCost;
+      spend(BAL.batteryCost);
       return;
     }
 
     if (G.build === 'fighter') {
       if (fighters.length >= MAX_TURRETS) { say('FIGHTER LIMIT REACHED'); return; }
       if (G.gold < BAL.jetCost) { say('NOT ENOUGH GOLD'); return; }
-      G.gold -= BAL.jetCost;
+      spend(BAL.jetCost);
       placeFighter(ci);
       return;
     }
     if (towers.length >= MAX_TURRETS) { say('TURRET LIMIT REACHED'); return; }
     if (G.gold < BAL.turretCost) { say('NOT ENOUGH GOLD'); return; }
-    G.gold -= BAL.turretCost;
+    spend(BAL.turretCost);
     placeTurret(ci);
   }
 
@@ -4362,7 +4390,7 @@
     if (!b || b.level >= BAL.upgradeMax) return;
     const cost = BAL.upgradeCost(upgradeBase(ci), b.level + 1);
     if (G.gold < cost) { say('UPGRADE COSTS ' + cost + ' GOLD'); return; }
-    G.gold -= cost;
+    spend(cost);
     b.level++;
     if (towerAt.get(ci) === b) {
       b.dmg = Math.round(b.dmg * BAL.upgradeDmg);
@@ -4384,13 +4412,14 @@
     resetBullets();
     sCount = 0;
     smokeGeo.setDrawRange(0, 0);
-    G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0;
+    G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0; G.spent = 0;
     G.inWave = false; G.breakLeft = BAL.breakTime; G.queue = [];
     G.over = false;
     G.paused = false;
     G.landed = 0;
     hideSummary();
     hideUnitCard();
+    document.getElementById('lossModal').classList.remove('open');
     alertEl.classList.add('quiet');    // a sticky PLANET LOST must not
     alertUntil = 0;                    // outlive the game it belongs to
     G.ships.length = 0;
