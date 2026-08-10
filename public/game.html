@@ -470,7 +470,7 @@
 </div>
 
 <div class="hud tc">
-  <div class="hplabel" id="hpVal">integrity 100</div>
+  <div class="hplabel" id="hpVal">planet defense 100</div>
   <div class="hpbar">
     <div class="hpfill" id="hpFill" style="width:100%"></div>
   </div>
@@ -1043,7 +1043,7 @@
   //  The aliens never reach the ground on purpose. They descend toward a
   //  target tile from orbit and the turrets have a window to kill them on
   //  the way down. Anything that touches the surface costs planetary
-  //  integrity, which is the only life total in the game.
+  //  planet defense, which is the only life total in the game.
   //
   //  A turret's reach is expressed in TILE RINGS, not metres. It can engage
   //  anything falling toward a tile within N rings of its own tile, once
@@ -1083,26 +1083,31 @@
     converge:   0.60,                       // fraction of the fall spent turning
     flameGap:   0.035,                      // seconds between exhaust puffs
     flameLife:  0.30,                       // how long one puff lasts
-    // wave-1 stats are double the game's original tuning; every stat then
-    // compounds 10% per wave, so the late game outgrows a static defense
+    // wave-1 stats are double the game's original tuning; hull and descent
+    // speed then compound 10% per wave, so the late game outgrows a static
+    // defense (landing damage stays a flat share - see the roster below)
     waveRamp:   w => Math.pow(1.10, w - 1),
     alienHp:    w => 46 * BAL.waveRamp(w),
     alienSpeed: w => 0.148 * BAL.waveRamp(w),  // sphere radii per second
     spawnGap:   0.55,
     income:     w => 5 * w,                 // five per wave cleared
-    landDamage: w => 14 * BAL.waveRamp(w),
-    // ---- enemy roster. hp/speed/dmg multiply the wave's base numbers; pay
-    //      is the bounty for that type; size is a length in tile inradii.
+    // a landing costs a flat share of the planet's defense, whatever the
+    // wave: the roster's dmg field IS that fraction. Reclaiming a hex
+    // hands a share back.
+    recoverHeal: 0.05,
+    // ---- enemy roster. hp/speed multiply the wave's base numbers; dmg is
+    //      the FRACTION of max planet defense a landing costs; pay is the
+    //      bounty for that type; size is a length in tile inradii.
     //      Waves are all vipers until the entry waves below, then the mix
     //      shifts so the late game asks different questions: hulks soak a
     //      turret's whole magazine, darts outrun its tracking window.
     // shield: fraction of max hp below which the type's energy shield
     // visual drops - a bare hulk IS the damage readout
     enemies: {
-      viper: { hp: 1.0,  speed: 1.0,  dmg: 1.0, pay: 1, size: 0.53 },
-      hulk:  { hp: 3.2,  speed: 0.62, dmg: 2.0, pay: 3, size: 0.80, shield: 0.5 },
-      dart:  { hp: 0.55, speed: 0.85, dmg: 1.0, pay: 2, size: 0.42 },
-      dread: { hp: 4.0,  speed: 0.45, dmg: 0,   pay: 6, size: 1.05 }
+      viper: { hp: 1.0,  speed: 1.0,  dmg: 0.05, pay: 1, size: 0.53 },
+      hulk:  { hp: 3.2,  speed: 0.62, dmg: 0.10, pay: 3, size: 0.80, shield: 0.5 },
+      dart:  { hp: 0.55, speed: 0.85, dmg: 0.05, pay: 2, size: 0.42 },
+      dread: { hp: 4.0,  speed: 0.45, dmg: 0,    pay: 6, size: 1.05 }
     },
     dartFrom: 4,                            // first wave fast darts appear
     hulkFrom: 7,                            // first wave armoured hulks appear
@@ -2208,14 +2213,19 @@
     if (recoveryMesh) recoveryMesh.count = 0;
   }
 
-  //  One tick per wave cleared: finished teams hand their tile back.
+  //  One tick per wave cleared: finished teams hand their tile back, and
+  //  every reclaimed hex restores a share of the planet's defense.
   function tickRecoveries() {
     let done = 0;
     for (const r of recoveries.slice()) {
       r.left--;
       if (r.left <= 0) { reviveHex(r.ci); removeRecovery(r.ci); done++; }
     }
-    if (done) say(done === 1 ? 'TILE RECOVERED' : done + ' TILES RECOVERED');
+    if (done) {
+      G.hp = Math.min(G.hpMax, G.hp + BAL.recoverHeal * G.hpMax * done);
+      const heal = Math.round(BAL.recoverHeal * 100 * done);
+      say((done === 1 ? 'TILE RECOVERED' : done + ' TILES RECOVERED') + ' · +' + heal + '% DEFENSE');
+    }
   }
 
 
@@ -3046,7 +3056,7 @@
       hp: spec.hp * E.hp,
       hp0: spec.hp * E.hp,               // spawn health, for the shield readout
       incoming: 0,
-      dmg: Math.round(BAL.landDamage(G.wave) * E.dmg),
+      dmg: G.hpMax * E.dmg,
       pay: E.pay,
       speed,
       // late-war ships come cloaked: hull hidden, guns blind to them,
@@ -3497,7 +3507,7 @@
 
   function updateHud() {
     const pct = Math.max(0, G.hp / G.hpMax);
-    hpVal.textContent = 'integrity ' + Math.ceil(G.hp);
+    hpVal.textContent = 'planet defense ' + Math.ceil(G.hp);
     hpFill.style.width = (pct * 100) + '%';
     hpFill.classList.toggle('low', pct < 0.34);
     hpVal.classList.toggle('low', pct < 0.34);
