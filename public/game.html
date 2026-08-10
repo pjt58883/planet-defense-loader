@@ -2728,12 +2728,15 @@
   const qWorldGoal = new THREE.Quaternion();
   let worldTween = false;
 
-  // swing the world so the bearing faces the camera
+  // swing the world so the bearing faces the camera. Centring a zone also
+  // ends the idle spin: the first thing the game shows you must not then
+  // drift back out of view.
   function swingTo(bearing) {
     camera.updateMatrixWorld();
     const front = camera.position.clone().normalize();
     qWorldGoal.setFromUnitVectors(bearing, front);
     worldTween = true;
+    engaged = true;
   }
 
   function faceBearing(bearing) {
