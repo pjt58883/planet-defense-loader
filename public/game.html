@@ -1441,6 +1441,9 @@
   //  platform deck in jetpad.glb, measured at its widest footprint radius
   //  (half its long axis) so it spans the tile edge to edge.
   const JETPAD_R = 0.952;
+  //  The deck reads better with air around it: the pad takes 80% of the
+  //  tile instead of spanning it edge to edge.
+  const JETPAD_FIT = 0.80;
 
   //  Deck top and jet belly clearance, both remeasured from the loaded
   //  models in buildModels so a parked jet sits ON the deck, not in it.
@@ -1494,7 +1497,7 @@
       emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
     };
     // the pad that claims the hex, laid flat on the tile like a turret's
-    jf.padK = f0.fit / JETPAD_R;
+    jf.padK = f0.fit * JETPAD_FIT / JETPAD_R;
     mPos.copy(home).multiplyScalar(RADIUS - f0.fit * 0.04);
     mQuat.setFromUnitVectors(LOCAL_UP, home);
     mScale.setScalar(jf.padK);
@@ -3894,7 +3897,7 @@
       battery:  () => [part(parts.pad), part(parts.battery, PAD_R / BATTERY_R, GUN_SEAT)],
       cannon:   () => [part(parts.hover), part(parts.core, kc, PLAT_DECK),
                        part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
-      jet:      () => [part(parts.jetpad), part(parts.jet, 1, 0.85)],
+      jet:      () => [part(parts.jetpad, JETPAD_FIT), part(parts.jet, 1, 0.85)],
       recovery: () => [part(parts.recovery)],
       dropship: () => [part(parts.viper)],
       dart:     () => [part(parts.dart)],
