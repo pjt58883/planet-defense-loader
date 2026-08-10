@@ -259,11 +259,16 @@
     flex-wrap:wrap;
   }
 
-  /* the shop: image buttons stacked down the right edge, cost beside art */
+  /* the shop: image buttons stacked down the right edge, cost beside art,
+     the gold readout sitting right on top of where it gets spent */
   .buildbar{
     right:20px;top:50%;transform:translateY(-50%);
     display:flex;flex-direction:column;gap:9px;
     pointer-events:auto;
+  }
+  .buildbar .gold{
+    text-align:center;font-size:19px;letter-spacing:.10em;
+    font-variant-numeric:tabular-nums;margin-bottom:2px;
   }
   .buy{
     display:flex;align-items:center;gap:10px;
@@ -355,6 +360,7 @@
     .sizes button{padding:8px 4px}
     .hplabel{font-size:20px;letter-spacing:.14em}
     .buildbar{right:10px;gap:6px}
+    .buildbar .gold{font-size:15px}
     .buy img{width:36px;height:36px}
     .nextwave{font-size:17px;padding:11px 20px}
     .hud.bc{bottom:16px}
@@ -394,11 +400,14 @@
 
 <!-- the shop: one image button per buildable, cost beside the picture -->
 <div class="hud buildbar">
+  <!-- the wallet lives over the shop: what you can afford, where you spend it -->
+  <div class="stat gold">gold<b id="goldVal">25</b></div>
   <button id="buildBtn" class="buy" title="Railgun turret"><img id="img-turret" alt="Railgun turret"><span class="cost">5</span></button>
   <button id="jetBtn" class="buy" title="Fighter"><img id="img-jet" alt="Fighter"><span class="cost">10</span></button>
   <button id="cannonBtn" class="buy" title="Sea cannon"><img id="img-cannon" alt="Sea cannon"><span class="cost">12</span></button>
   <button id="batteryBtn" class="buy" title="Missile battery"><img id="img-battery" alt="Missile battery"><span class="cost">18</span></button>
   <button id="recoveryBtn" class="buy" title="Recovery team"><img id="img-recovery" alt="Recovery team"><span class="cost">15</span></button>
+  <button id="satBtn" class="buy" title="Recon satellite"><img id="img-sat" alt="Recon satellite"><span class="cost">8</span></button>
 </div>
 
 <div class="hud bc">
@@ -434,6 +443,16 @@
   </div>
 </div>
 
+<!-- the loss card: the run's obituary, and the way back in -->
+<div class="modal" id="lossModal">
+  <div class="modal-card wave-card">
+    <div class="wc-line on wc-title" style="color:#ff5f56">Planet Lost</div>
+    <div class="wc-line on wc-stat">Waves Survived: <b id="lossWaves">0</b></div>
+    <div class="wc-line on wc-stat">Gold Spent: <b id="lossSpent">0</b></div>
+    <button class="wc-line on wc-continue" id="lossBtn">New Game</button>
+  </div>
+</div>
+
 <div class="unitcard" id="unitCard">
   <div class="unit-name" id="unitName">Turret</div>
   <div class="unit-row" id="unitDmgRow"><span id="unitDmgLabel">damage</span><b id="unitDmg"></b></div>
@@ -456,7 +475,6 @@
     <div class="hpfill" id="hpFill" style="width:100%"></div>
   </div>
   <div class="stats">
-    <span class="stat">gold<b id="goldVal">25</b></span>
     <span class="stat">wave<b id="waveVal">0</b></span>
     <span class="stat">next<b id="nextVal">20s</b></span>
   </div>
@@ -1037,7 +1055,7 @@
     inWave: false, breakLeft: 20, spawnTimer: 0, queue: [],
     ready: false, over: false, started: false, paused: false,
     build: null, bearing: null, nextComp: null,
-    shipDist: 1.55, landed: 0, ships: []
+    shipDist: 1.55, landed: 0, spent: 0, ships: []
   };
 
   // Every number that decides whether the game is fair lives here and nowhere
@@ -1150,6 +1168,15 @@
     batteryTubes: 5,
     batterySalvo: 0.18,                     // seconds between launches in a ripple
     batteryRate: 3.0, batteryDmg: 30,       // per-tube reload; the payload is unchanged
+    // ---- cloaking, and the eye that answers it. From cloakFrom on, every
+    //      ship the motherships launch is cloaked: the model is hidden and
+    //      your units will not fire at what they cannot see - only the red
+    //      outline betrays the approach. A recon satellite parked in orbit
+    //      reveals every cloaked ship in the rings beneath it.
+    cloakFrom: 15,
+    satCost:   8,
+    satRange:  3,                           // rings of sky one satellite uncloaks
+    satAlt:    1.55,                        // stationary orbit, above every ceiling
     gunTurn:    4.2,                        // radians/s a railgun mount slews
     batteryTurn: 1.8,                       // the launcher swings heavier
     aimSettle:  0.05,                       // radians off-solution a mount may fire at
@@ -1530,6 +1557,76 @@
     if (jetpadMesh) { jetpadMesh.count = 0; jetpadOutline.count = 0; }
   }
 
+  // =====================================================================
+  //  RECON SATELLITE
+  //
+  //  The answer to cloaking. It parks in stationary orbit over its hex,
+  //  higher than anything can shoot, and reveals every cloaked ship in
+  //  the rings beneath it so the guns below can do their work. No weapons
+  //  of its own: it is a purchase of information, not firepower.
+  // =====================================================================
+  const satellites = [];
+  const satAt = new Map();
+  const SAT_LEN = 1.6;         // placeholder panel bar length, model units
+  let satMesh = null, satOutline = null;
+  const sQ = new THREE.Quaternion();
+
+  function placeSat(ci) {
+    if (satellites.length >= MAX_TURRETS) return null;
+    const f = tileFit(ci);
+    const home = f.up.clone();
+    const cover = ringSet(ci, BAL.satRange);
+    // the detection dome, measured from the cover set like a patrol circle
+    let radius = 0;
+    for (const c of cover) radius = Math.max(radius, home.angleTo(tiles.cells[c].center));
+    const s = { ci, home, radius, level: 1,
+                k: tiles.meanInr * 0.9 / SAT_LEN,
+                spin: Math.random() * Math.PI * 2 };
+    satellites.push(s);
+    satAt.set(ci, s);
+    return s;
+  }
+
+  function removeSat(ci) {
+    const s = satAt.get(ci);
+    if (!s) return false;
+    satellites.splice(satellites.indexOf(s), 1);
+    satAt.delete(ci);
+    return true;
+  }
+
+  function clearSats() {
+    satellites.length = 0;
+    satAt.clear();
+    if (satMesh) { satMesh.count = 0; satOutline.count = 0; }
+  }
+
+  function updateSats(dt) {
+    if (satMesh) {
+      for (let i = 0; i < satellites.length; i++) {
+        const s = satellites[i];
+        s.spin += dt * 0.5;                  // a slow roll, so it reads alive
+        mPos.copy(s.home).multiplyScalar(RADIUS + BAL.satAlt);
+        mQuat.setFromUnitVectors(LOCAL_UP, s.home);
+        sQ.setFromAxisAngle(s.home, s.spin);
+        mQuat.premultiply(sQ);
+        mScale.setScalar(s.k);
+        satMesh.setMatrixAt(i, mMat.compose(mPos, mQuat, mScale));
+      }
+      satMesh.count = satellites.length;
+      if (satellites.length) satMesh.instanceMatrix.needsUpdate = true;
+      mirrorOutline(satMesh, satOutline);
+    }
+    // detection: any cloaked ship under a satellite's dome loses its veil
+    for (const a of aliens) {
+      if (!a.cloak) continue;
+      a.seen = false;
+      for (const s of satellites) {
+        if (a.dir.angleTo(s.home) < s.radius) { a.seen = true; break; }
+      }
+    }
+  }
+
   //  One pose writer for every fighter state: nose down the given
   //  direction, wings squared to the local up, banked by f.bank.
   function writeJetPose(i, f, noseDir) {
@@ -1574,6 +1671,7 @@
       let best = null;
       for (const a of aliens) {
         if (!a.alive || a.alt > f.ceiling) continue;
+        if (a.cloak && !a.seen) continue;          // pilots cannot chase a ghost
         // a dart on THIS fighter's tail may be engaged anywhere;
         // everything else must be inside the patrol circle
         if (!f.cover.has(a.ci) && a.hunting !== f) continue;
@@ -1752,6 +1850,7 @@
       lost.push('FIGHTER');
     }
     if (removeRecovery(ci)) lost.push('RECOVERY TEAM');
+    if (removeSat(ci)) lost.push('SATELLITE');
     return lost.length ? lost.join(' + ') + ' LOST' : null;
   }
 
@@ -2950,6 +3049,10 @@
       dmg: Math.round(BAL.landDamage(G.wave) * E.dmg),
       pay: E.pay,
       speed,
+      // late-war ships come cloaked: hull hidden, guns blind to them,
+      // until a satellite's dome sweeps the veil off
+      cloak: G.wave >= BAL.cloakFrom,
+      seen: false,
       alive: true
     });
   }
@@ -3117,6 +3220,7 @@
       let best = null;
       for (const a of aliens) {
         if (!a.alive || a.alt > t.ceiling) continue;
+        if (a.cloak && !a.seen) continue;          // no target the mount can see
         if (!t.cover.has(a.ci)) continue;
         if (a.hp - a.incoming <= 0) continue;      // already dead, shells in flight
         if (!best || a.alt < best.alt) best = a;
@@ -3179,6 +3283,7 @@
       let best = null;
       for (const a of aliens) {
         if (!a.alive || a.alt > r.ceiling) continue;
+        if (a.cloak && !a.seen) continue;
         if (!r.cover.has(a.ci)) continue;
         if (a.hp - a.incoming <= 0) continue;
         if (!best || a.alt < best.alt) best = a;
@@ -3191,13 +3296,16 @@
       muzzleFlash(r.pos);
     }
 
-    // compact and draw, each type into its own mesh
+    // compact and draw, each type into its own mesh. A cloaked, unseen
+    // ship draws ONLY its red outline: the silhouette is the warning.
     let live = 0, shields = 0, guns = 0;
     const drawn = { viper: 0, hulk: 0, dart: 0, dread: 0 };
+    const drawnO = { viper: 0, hulk: 0, dart: 0, dread: 0 };
     for (let i = 0; i < aliens.length; i++) {
       const a = aliens[i];
       if (!a.alive) continue;
       aliens[live] = a;
+      const hidden = a.cloak && !a.seen;
       posOf(a);
       a.prev.copy(a.pos);
       a.pos.copy(alienPos);
@@ -3233,22 +3341,26 @@
       const vk = tiles.meanInr * BAL.enemies[a.type].size / ENEMY_LEN[a.type];
       dummy.scale.setScalar(vk);
 
-      a.emit = (a.emit || 0) + dt;              // fZ already points out the back
-      while (a.emit >= BAL.flameGap) {
-        a.emit -= BAL.flameGap;
-        flame(alienPos, fZ, 0.94 * vk, tiles.meanInr * 0.10, BAL.flameLife);
+      // a cloaked hull vents nothing: the exhaust would give it away
+      if (!hidden) {
+        a.emit = (a.emit || 0) + dt;            // fZ already points out the back
+        while (a.emit >= BAL.flameGap) {
+          a.emit -= BAL.flameGap;
+          flame(alienPos, fZ, 0.94 * vk, tiles.meanInr * 0.10, BAL.flameLife);
+        }
+        dummy.updateMatrix();
+        enemyMeshes[a.type].setMatrixAt(drawn[a.type]++, dummy.matrix);
       }
-      dummy.updateMatrix();
-      enemyMeshes[a.type].setMatrixAt(drawn[a.type], dummy.matrix);
 
-      // the outline twin: same pose, a few percent larger
-      dummy.scale.setScalar(vk * OUTLINE_SCALE);
+      // the outline twin: same pose, a few percent larger. It draws for
+      // hidden ships too - it is all of them the player gets to see.
+      dummy.scale.setScalar(vk * (hidden ? 1 : OUTLINE_SCALE));
       dummy.updateMatrix();
-      outlineMeshes[a.type].setMatrixAt(drawn[a.type]++, dummy.matrix);
+      outlineMeshes[a.type].setMatrixAt(drawnO[a.type]++, dummy.matrix);
 
       // the cannon under a dreadnaught: hung below the hull and swung onto
       // whatever it is shelling, falling back to straight down when idle
-      if (a.type === 'dread' && dreadGunMesh) {
+      if (a.type === 'dread' && dreadGunMesh && !hidden) {
         gPos.copy(alienPos).addScaledVector(a.dir, -DREAD_GUN_DROP * vk);
         if (a.aim) gDir.subVectors(a.aim, gPos);
         else gDir.copy(a.dir).multiplyScalar(-1);
@@ -3282,9 +3394,10 @@
         dummy.scale.setScalar(vk);
       }
 
-      // the shell rides the hull until half its health is gone
+      // the shell rides the hull until half its health is gone (a hidden
+      // hull hides its shield with it)
       const sh = BAL.enemies[a.type].shield;
-      if (sh && a.hp > a.hp0 * sh) {
+      if (sh && !hidden && a.hp > a.hp0 * sh) {
         dummy.quaternion.set(0, 0, 0, 1);
         dummy.scale.setScalar(vk * SHIELD_R);
         dummy.updateMatrix();
@@ -3296,7 +3409,7 @@
     for (const t in enemyMeshes) {
       enemyMeshes[t].count = drawn[t];
       enemyMeshes[t].instanceMatrix.needsUpdate = true;
-      outlineMeshes[t].count = drawn[t];
+      outlineMeshes[t].count = drawnO[t];
       outlineMeshes[t].instanceMatrix.needsUpdate = true;
     }
     if (dreadGunMesh) {
@@ -3308,6 +3421,7 @@
     shieldMesh.count = shields;
     shieldMesh.instanceMatrix.needsUpdate = true;
 
+    updateSats(dt);
     updateFighters(dt);
     updateBullets(dt);
     updateSmoke(dt);
@@ -3336,6 +3450,10 @@
     resetBullets();
     hideMothers();
     say('PLANET LOST \u00B7 NEW WORLD TO RESTART', true);
+    // the obituary: the wave that killed you was not survived
+    document.getElementById('lossWaves').textContent = Math.max(0, G.wave - 1);
+    document.getElementById('lossSpent').textContent = Math.round(G.spent);
+    document.getElementById('lossModal').classList.add('open');
   }
 
   // ---------- readouts ----------
@@ -3351,16 +3469,24 @@
   const cannonBtn = document.getElementById('cannonBtn');
   const batteryBtn = document.getElementById('batteryBtn');
   const recoveryBtn = document.getElementById('recoveryBtn');
+  const satBtn = document.getElementById('satBtn');
   const waveBtn = document.getElementById('waveBtn');
   let alertUntil = 0;
 
   // the shop buttons carry their price beside the art
   for (const [id, cost] of [['buildBtn', BAL.turretCost], ['jetBtn', BAL.jetCost],
        ['cannonBtn', BAL.cannonCost], ['batteryBtn', BAL.batteryCost],
-       ['recoveryBtn', BAL.recoveryCost]]) {
+       ['recoveryBtn', BAL.recoveryCost], ['satBtn', BAL.satCost]]) {
     const b = document.getElementById(id);
     b.querySelector('.cost').textContent = cost;
     b.title += ' (' + cost + ' gold)';
+  }
+
+  // every purchase and upgrade goes through here, so the loss card can
+  // say what the whole defence effort cost
+  function spend(n) {
+    G.gold -= n;
+    G.spent += n;
   }
 
   function say(msg, sticky) {
@@ -3389,6 +3515,8 @@
     batteryBtn.setAttribute('aria-pressed', G.build === 'battery' ? 'true' : 'false');
     recoveryBtn.disabled = G.gold < BAL.recoveryCost && G.build !== 'recovery';
     recoveryBtn.setAttribute('aria-pressed', G.build === 'recovery' ? 'true' : 'false');
+    satBtn.disabled = G.gold < BAL.satCost && G.build !== 'sat';
+    satBtn.setAttribute('aria-pressed', G.build === 'sat' ? 'true' : 'false');
     if (selCi !== null) refreshUnitCard();
     buildBtn.disabled = G.gold < BAL.turretCost && G.build !== 'turret';
     jetBtn.disabled = G.gold < BAL.jetCost && G.build !== 'fighter';
@@ -3410,6 +3538,7 @@
       : G.build === 'cannon' ? 'Tap a WATER tile to float a sea cannon. Longer reach and a heavier shell than a land turret.'
       : G.build === 'battery' ? 'Tap a land tile to build a missile battery. Slow, heavy shells that burst on impact and damage everything nearby.'
       : G.build === 'recovery' ? 'Tap a crossed-out tile to send a recovery team. The dig takes one wave for every wave the tile has been lost.'
+      : G.build === 'sat' ? 'Tap a tile to park a recon satellite in orbit above it. It reveals cloaked ships in the rings beneath, so your guns can fire on them.'
       : '';
     hint.classList.toggle('gone', !G.build);
   }
@@ -3419,6 +3548,7 @@
   cannonBtn.addEventListener('click', () => setBuild(G.build === 'cannon' ? null : 'cannon'));
   batteryBtn.addEventListener('click', () => setBuild(G.build === 'battery' ? null : 'battery'));
   recoveryBtn.addEventListener('click', () => setBuild(G.build === 'recovery' ? null : 'recovery'));
+  satBtn.addEventListener('click', () => setBuild(G.build === 'sat' ? null : 'sat'));
   waveBtn.addEventListener('click', () => { if (!G.inWave && !G.over) { G.breakLeft = 0; } });
 
   // ---------- wave summary ----------
@@ -3437,8 +3567,13 @@
   const ENEMY_INTRO = {
     dart: 'Darts are fast enemy fighters that hunt down your fighters before landing.',
     hulk: 'Hulks are armoured transports behind energy shields. The shield falls at half health, and a landed hulk hits the ground twice as hard.',
-    dread: 'Dreadnaughts are orbital bombardment ships. One stops at railgun height and shells your buildings with a railgun’s own reach — its wave does not end until it is shot down.'
+    dread: 'Dreadnaughts are orbital bombardment ships. One stops at railgun height and shells your buildings with a railgun’s own reach — its wave does not end until it is shot down.',
+    cloak: 'The motherships now cloak every ship they launch: hulls vanish, and your units will not fire at what they cannot see — only the red outlines betray the approach. Park recon satellites in orbit to reveal everything beneath them.'
   };
+  //  Most debuts introduce a unit; the cloak is a capability, and the
+  //  card's header says so.
+  const INTRO_HEAD = { cloak: 'New Enemy Tech:' };
+  const wcNewHead = wcNew.querySelector('.wc-new-h');
   let summaryUntil = 0;
   const wcTimers = [];
 
@@ -3474,9 +3609,13 @@
     // ...announces a debuting enemy type...
     const debut = wave + 1 === BAL.dartFrom ? 'dart'
                 : wave + 1 === BAL.hulkFrom ? 'hulk'
-                : wave + 1 === BAL.dreadFrom ? 'dread' : null;
+                : wave + 1 === BAL.dreadFrom ? 'dread'
+                : wave + 1 === BAL.cloakFrom ? 'cloak' : null;
     wcNew.style.display = debut ? '' : 'none';
-    if (debut) wcNewDesc.textContent = ENEMY_INTRO[debut];
+    if (debut) {
+      wcNewHead.textContent = INTRO_HEAD[debut] || 'New Enemy Unit:';
+      wcNewDesc.textContent = ENEMY_INTRO[debut];
+    }
 
     // ...and warns about the one thing worth spending the whole break on
     modalWarn.classList.toggle('show', shipCountFor(wave + 1) > shipCountFor(wave));
@@ -3533,11 +3672,18 @@
   });
 
   document.getElementById('modalBtn').addEventListener('click', hideSummary);
+  // the way back in: same world, fresh run
+  document.getElementById('lossBtn').addEventListener('click', () => {
+    document.getElementById('lossModal').classList.remove('open');
+    resetGame();
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       hideSummary();
       hideUnitCard();
       document.getElementById('catalogModal').classList.remove('open');
+      // dismissable without restarting: the menu's new-world path remains
+      document.getElementById('lossModal').classList.remove('open');
     }
   });
 
@@ -3583,6 +3729,16 @@
       unitDmg.textContent = b.left + (b.left === 1 ? ' wave' : ' waves');
       unitRateRow.style.display = '';
       unitRate.textContent = b.need + (b.need === 1 ? ' wave dig' : ' wave dig');
+      unitLvl.textContent = '\u2014';
+      unitUpgBtn.textContent = 'No upgrade';
+      unitUpgBtn.disabled = true;
+      return;
+    } else if (satAt.get(selCi)) {
+      unitName.textContent = 'Recon satellite';
+      unitDmgLabel.textContent = 'reveals';
+      unitDmg.textContent = 'cloaked ships';
+      unitRateRow.style.display = '';
+      unitRate.textContent = BAL.satRange + ' rings';
       unitLvl.textContent = '\u2014';
       unitUpgBtn.textContent = 'No upgrade';
       unitUpgBtn.disabled = true;
@@ -3654,6 +3810,8 @@
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
     // the fighter's landing pad, marking the hex it is based from
     jetpad:  ['/assets/jetpad.glb'],
+    // the recon satellite; a placeholder solar bar until sat.glb lands
+    sat:     ['/assets/sat.glb'],
     // the dreadnaught: hull and the bombardment cannon slung under it. The
     // cannon is a separate part so it can slew onto its target in flight.
     dread:    ['/assets/dread.glb'],
@@ -3671,7 +3829,7 @@
   //  Slots with no shipped GLB yet render as placeholders by design, so a
   //  missing file is expected and not worth an on-screen warning. New units
   //  sit here until their GLB lands in public/assets.
-  const OPTIONAL_MODELS = new Set([]);
+  const OPTIONAL_MODELS = new Set(['sat']);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
@@ -3695,6 +3853,9 @@
         geo = new THREE.BoxGeometry(JETPAD_R * 2, 0.16, JETPAD_R * 2);
         geo.translate(0, 0.08, 0);
         color = 0x55606e; break;
+      case 'sat':                                       // a solar array bar, centred
+        geo = new THREE.BoxGeometry(SAT_LEN, 0.10, SAT_LEN * 0.28);
+        color = 0x9ad0e0; break;
       case 'mother':
         geo = new THREE.CylinderGeometry(MOTHER_LEN * 0.18, MOTHER_LEN * 0.26, MOTHER_LEN, 8);
         geo.rotateX(-Math.PI / 2);                      // long axis on Z, nose -Z
@@ -3794,6 +3955,10 @@
     if (parts.jet.geo.boundingBox) JET_BELLY = -parts.jet.geo.boundingBox.min.y;
     jetpadMesh = instanced(parts.jetpad, MAX_TURRETS, true);
     jetpadOutline = makeAllyOutline(parts.jetpad.geo, MAX_TURRETS);
+
+    // the recon satellite, floating free: no grounding translate
+    satMesh = instanced(parts.sat, MAX_TURRETS, true);
+    satOutline = makeAllyOutline(parts.sat.geo, MAX_TURRETS);
 
     // green twins for everything the player builds
     padOutline = makeAllyOutline(parts.pad.geo, MAX_TURRETS);
@@ -3924,6 +4089,7 @@
                        part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
       jet:      () => [part(parts.jetpad, JETPAD_FIT), part(parts.jet, 1, 0.85)],
       recovery: () => [part(parts.recovery)],
+      sat:      () => [part(parts.sat)],
       dropship: () => [part(parts.viper)],
       dart:     () => [part(parts.dart)],
       hulk:     () => [part(parts.hulk)],
@@ -3952,7 +4118,7 @@
 
     for (const [id, k] of [['img-turret', 'turret'], ['img-jet', 'jet'],
          ['img-cannon', 'cannon'], ['img-battery', 'battery'],
-         ['img-recovery', 'recovery']]) {
+         ['img-recovery', 'recovery'], ['img-sat', 'sat']]) {
       setArt(document.getElementById(id), k);
     }
     buildCatalog();
@@ -3971,6 +4137,8 @@
      'Five homing missiles on independent reloads: it ripples off a full salvo, each burst splashing everything near the hit, then the tubes come back one by one. Engages highest of all.'],
     ['recovery', 'Recovery Team', BAL.recoveryCost,
      'The only thing that builds on dead ground. Digs a crossed-out tile back out, one wave of work per wave it has been lost, and defends itself with sidearms.'],
+    ['sat', 'Recon Satellite', BAL.satCost,
+     'Parks in stationary orbit over its hex, above every gun’s reach, and reveals cloaked ships in the rings beneath so your units can target them. No weapons of its own.'],
     ['side', 'The enemy'],
     ['dropship', 'Dropship', null,
      'The line trooper. Falls from its mothership toward a telegraphed tile; anything that lands kills the hex under it.'],
@@ -4144,49 +4312,54 @@
       if (recoveryAt.has(ci)) { say('TEAM ALREADY WORKING'); return; }
       if (recoveries.length >= MAX_TURRETS) { say('RECOVERY LIMIT REACHED'); return; }
       if (G.gold < BAL.recoveryCost) { say('NOT ENOUGH GOLD'); return; }
-      G.gold -= BAL.recoveryCost;
+      spend(BAL.recoveryCost);
       const r = placeRecovery(ci);
       if (r) say('RECOVERY IN ' + r.need + (r.need === 1 ? ' WAVE' : ' WAVES'));
       return;
     }
     if (cellDead[ci]) { say('DEAD GROUND'); return; }
-    // a fighter is based on a tile, not built on it, so it can sit over water
+    // fighters and satellites anchor to a tile rather than build on it,
+    // so both can sit over water
     const wet = cellType[ci] === 'lake';
-    if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
+    if (wet && G.build !== 'fighter' && G.build !== 'cannon' && G.build !== 'sat') { say('CANNOT BUILD ON WATER'); return; }
     if (!wet && G.build === 'cannon') { say('SEA CANNON NEEDS WATER'); return; }
-    // a fighter's landing pad claims its hex outright now: pad and tower
-    // can no longer share a tile
-    if (G.build === 'fighter') {
-      if (fighterAt.has(ci)) { say('FIGHTER ALREADY BASED HERE'); return; }
-      if (towerAt.has(ci)) { say('TILE OCCUPIED'); return; }
-    } else if (towerAt.has(ci) || fighterAt.has(ci)) {
-      say('TILE OCCUPIED'); return;
+    // every unit claims its hex outright: one occupant per tile
+    if (towerAt.has(ci) || fighterAt.has(ci) || satAt.has(ci)) {
+      say(G.build === 'fighter' && fighterAt.has(ci) ? 'FIGHTER ALREADY BASED HERE' : 'TILE OCCUPIED');
+      return;
+    }
+
+    if (G.build === 'sat') {
+      if (G.gold < BAL.satCost) { say('NOT ENOUGH GOLD'); return; }
+      if (!placeSat(ci)) { say('SATELLITE LIMIT REACHED'); return; }
+      spend(BAL.satCost);
+      return;
     }
 
     if (G.build === 'cannon') {
       if (G.gold < BAL.cannonCost) { say('NOT ENOUGH GOLD'); return; }
       if (!placeCannon(ci)) { say('CANNON LIMIT REACHED'); return; }
-      G.gold -= BAL.cannonCost;
+      spend(BAL.cannonCost);
       return;
     }
 
     if (G.build === 'battery') {
       if (G.gold < BAL.batteryCost) { say('NOT ENOUGH GOLD'); return; }
       if (!placeBattery(ci)) { say('BATTERY LIMIT REACHED'); return; }
-      G.gold -= BAL.batteryCost;
+      spend(BAL.batteryCost);
       return;
     }
 
     if (G.build === 'fighter') {
       if (fighters.length >= MAX_TURRETS) { say('FIGHTER LIMIT REACHED'); return; }
       if (G.gold < BAL.jetCost) { say('NOT ENOUGH GOLD'); return; }
-      G.gold -= BAL.jetCost;
+      spend(BAL.jetCost);
       placeFighter(ci);
       return;
     }
     if (towers.length >= MAX_TURRETS) { say('TURRET LIMIT REACHED'); return; }
     if (G.gold < BAL.turretCost) { say('NOT ENOUGH GOLD'); return; }
-    G.gold -= BAL.turretCost;
+    spend(BAL.turretCost);
     placeTurret(ci);
   }
 
@@ -4206,8 +4379,7 @@
   };
 
   function buildingAt(ci) {
-    // the fighter comes last: on a shared hex the card shows the hardware
-    return towerAt.get(ci) || recoveryAt.get(ci) || fighterAt.get(ci) || null;
+    return towerAt.get(ci) || recoveryAt.get(ci) || fighterAt.get(ci) || satAt.get(ci) || null;
   }
 
   function upgradeBase(ci) {
@@ -4216,12 +4388,12 @@
   }
 
   function upgradeAt(ci) {
-    if (recoveryAt.has(ci)) return;          // a dig crew has nothing to level
+    if (recoveryAt.has(ci) || satAt.has(ci)) return;   // nothing to level
     const b = buildingAt(ci);
     if (!b || b.level >= BAL.upgradeMax) return;
     const cost = BAL.upgradeCost(upgradeBase(ci), b.level + 1);
     if (G.gold < cost) { say('UPGRADE COSTS ' + cost + ' GOLD'); return; }
-    G.gold -= cost;
+    spend(cost);
     b.level++;
     if (towerAt.get(ci) === b) {
       b.dmg = Math.round(b.dmg * BAL.upgradeDmg);
@@ -4237,18 +4409,20 @@
     clearTurrets();
     clearFighters();
     clearRecoveries();
+    clearSats();
     clearEnemies();
     clearDead();
     resetBullets();
     sCount = 0;
     smokeGeo.setDrawRange(0, 0);
-    G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0;
+    G.hp = G.hpMax; G.gold = BAL.startGold; G.wave = 0; G.spent = 0;
     G.inWave = false; G.breakLeft = BAL.breakTime; G.queue = [];
     G.over = false;
     G.paused = false;
     G.landed = 0;
     hideSummary();
     hideUnitCard();
+    document.getElementById('lossModal').classList.remove('open');
     alertEl.classList.add('quiet');    // a sticky PLANET LOST must not
     alertUntil = 0;                    // outlive the game it belongs to
     G.ships.length = 0;
@@ -4494,6 +4668,7 @@
     if (e.key === 'c' || e.key === 'C') setBuild(G.build === 'cannon' ? null : 'cannon');
     if (e.key === 'm' || e.key === 'M') setBuild(G.build === 'battery' ? null : 'battery');
     if (e.key === 'x' || e.key === 'X') setBuild(G.build === 'recovery' ? null : 'recovery');
+    if (e.key === 'o' || e.key === 'O') setBuild(G.build === 'sat' ? null : 'sat');
   });
 
   function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
