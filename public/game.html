@@ -4141,6 +4141,7 @@
     for (const k in RIGS) {
       const g = new THREE.Group();
       for (const m of RIGS[k]()) g.add(m);
+      g.rotation.y = Math.PI;        // face the other way in the portrait
       sc.add(g);
       box.setFromObject(g).getBoundingSphere(sph);
       const d = sph.radius * 2.7;
