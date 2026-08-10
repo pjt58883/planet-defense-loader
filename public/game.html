@@ -470,7 +470,7 @@
 </div>
 
 <div class="hud tc">
-  <div class="hplabel" id="hpVal">integrity 100</div>
+  <div class="hplabel" id="hpVal">planet defense 100</div>
   <div class="hpbar">
     <div class="hpfill" id="hpFill" style="width:100%"></div>
   </div>
@@ -1043,7 +1043,7 @@
   //  The aliens never reach the ground on purpose. They descend toward a
   //  target tile from orbit and the turrets have a window to kill them on
   //  the way down. Anything that touches the surface costs planetary
-  //  integrity, which is the only life total in the game.
+  //  planet defense, which is the only life total in the game.
   //
   //  A turret's reach is expressed in TILE RINGS, not metres. It can engage
   //  anything falling toward a tile within N rings of its own tile, once
@@ -1055,7 +1055,8 @@
     inWave: false, breakLeft: 20, spawnTimer: 0, queue: [],
     ready: false, over: false, started: false, paused: false,
     build: null, bearing: null, nextComp: null,
-    shipDist: 1.55, landed: 0, spent: 0, ships: []
+    shipDist: 1.55, landed: 0, spent: 0, ships: [],
+    newShip: null                  // a just-arrived mothership's bearing, for the camera
   };
 
   // Every number that decides whether the game is fair lives here and nowhere
@@ -1083,26 +1084,31 @@
     converge:   0.60,                       // fraction of the fall spent turning
     flameGap:   0.035,                      // seconds between exhaust puffs
     flameLife:  0.30,                       // how long one puff lasts
-    // wave-1 stats are double the game's original tuning; every stat then
-    // compounds 10% per wave, so the late game outgrows a static defense
+    // wave-1 stats are double the game's original tuning; hull and descent
+    // speed then compound 10% per wave, so the late game outgrows a static
+    // defense (landing damage stays a flat share - see the roster below)
     waveRamp:   w => Math.pow(1.10, w - 1),
     alienHp:    w => 46 * BAL.waveRamp(w),
     alienSpeed: w => 0.148 * BAL.waveRamp(w),  // sphere radii per second
     spawnGap:   0.55,
     income:     w => 5 * w,                 // five per wave cleared
-    landDamage: w => 14 * BAL.waveRamp(w),
-    // ---- enemy roster. hp/speed/dmg multiply the wave's base numbers; pay
-    //      is the bounty for that type; size is a length in tile inradii.
+    // a landing costs a flat share of the planet's defense, whatever the
+    // wave: the roster's dmg field IS that fraction. Reclaiming a hex
+    // hands a share back.
+    recoverHeal: 0.05,
+    // ---- enemy roster. hp/speed multiply the wave's base numbers; dmg is
+    //      the FRACTION of max planet defense a landing costs; pay is the
+    //      bounty for that type; size is a length in tile inradii.
     //      Waves are all vipers until the entry waves below, then the mix
     //      shifts so the late game asks different questions: hulks soak a
     //      turret's whole magazine, darts outrun its tracking window.
     // shield: fraction of max hp below which the type's energy shield
     // visual drops - a bare hulk IS the damage readout
     enemies: {
-      viper: { hp: 1.0,  speed: 1.0,  dmg: 1.0, pay: 1, size: 0.53 },
-      hulk:  { hp: 3.2,  speed: 0.62, dmg: 2.0, pay: 3, size: 0.80, shield: 0.5 },
-      dart:  { hp: 0.55, speed: 0.85, dmg: 1.0, pay: 2, size: 0.42 },
-      dread: { hp: 4.0,  speed: 0.45, dmg: 0,   pay: 6, size: 1.05 }
+      viper: { hp: 1.0,  speed: 1.0,  dmg: 0.05, pay: 1, size: 0.53 },
+      hulk:  { hp: 3.2,  speed: 0.62, dmg: 0.10, pay: 3, size: 0.80, shield: 0.5 },
+      dart:  { hp: 0.55, speed: 0.85, dmg: 0.05, pay: 2, size: 0.42 },
+      dread: { hp: 4.0,  speed: 0.45, dmg: 0,    pay: 6, size: 1.05 }
     },
     dartFrom: 4,                            // first wave fast darts appear
     hulkFrom: 7,                            // first wave armoured hulks appear
@@ -1684,7 +1690,11 @@
       // off - until the next wave scrambles the lot back into the air.
       if (G.inWave && f.state !== 'flying') f.state = 'flying';
       if (!G.inWave && !best) {
-        if (f.state === 'flying' && f.dir.angleTo(f.home) < f.radius * 0.30) f.state = 'settling';
+        // the settle gate must be at least the jet's own turning circle
+        // (speed over turn rate), or an unlucky approach angle can orbit
+        // home forever, always too wide to ever begin the descent
+        const gate = Math.max(f.radius * 0.30, BAL.jetSpeed / BAL.jetTurn * 1.2);
+        if (f.state === 'flying' && f.dir.angleTo(f.home) < gate) f.state = 'settling';
         if (f.state === 'settling') {
           // hover in: slide over the pad and sink onto the deck
           const rest = restAlt(f);
@@ -2208,14 +2218,19 @@
     if (recoveryMesh) recoveryMesh.count = 0;
   }
 
-  //  One tick per wave cleared: finished teams hand their tile back.
+  //  One tick per wave cleared: finished teams hand their tile back, and
+  //  every reclaimed hex restores a share of the planet's defense.
   function tickRecoveries() {
     let done = 0;
     for (const r of recoveries.slice()) {
       r.left--;
       if (r.left <= 0) { reviveHex(r.ci); removeRecovery(r.ci); done++; }
     }
-    if (done) say(done === 1 ? 'TILE RECOVERED' : done + ' TILES RECOVERED');
+    if (done) {
+      G.hp = Math.min(G.hpMax, G.hp + BAL.recoverHeal * G.hpMax * done);
+      const heal = Math.round(BAL.recoverHeal * 100 * done);
+      say((done === 1 ? 'TILE RECOVERED' : done + ' TILES RECOVERED') + ' · +' + heal + '% DEFENSE');
+    }
   }
 
 
@@ -2869,7 +2884,6 @@
     // everything about the coming wave is decided here, so the break shows
     // you the real thing rather than a placeholder
     const w = G.wave + 1;
-    G.nextComp = rollComposition(w);
     G.shipDist = shipDistFor(w);
     const want = shipCountFor(w);
 
@@ -2907,8 +2921,20 @@
       }
       G.ships.push({ bearing: dryBest || best, dist: G.shipDist,
                      ang: startAng, ang0: startAng, born: w });
+      // the next camera swing shows the player where the new front opened
+      G.newShip = G.ships[G.ships.length - 1].bearing;
     }
     G.ships.length = Math.min(G.ships.length, want);
+
+    // every ship rolls the manifest its own age has earned; the card
+    // prints the fleet's total
+    const counts = { viper: 0, hulk: 0, dart: 0, dread: 0 };
+    for (const s of G.ships) {
+      s.age = w - s.born + 1;
+      s.comp = rollComposition(s.age);
+      for (const t in s.comp.counts) counts[t] += s.comp.counts[t];
+    }
+    G.nextComp = { counts };
 
     for (let i = 0; i < G.ships.length; i++) {
       G.ships[i].dist = G.shipDist;
@@ -2982,18 +3008,18 @@
     G.wave++;
     G.inWave = true;
 
-    const n = BAL.alienN(G.wave);
-    const hp = BAL.alienHp(G.wave);
-    const speed = BAL.alienSpeed(G.wave);
-    const fleet = G.ships.length;
-    // the manifest the summary card promised; re-rolled only if it is
-    // somehow stale (a balance patch changing alienN mid-run, say)
-    const comp = (G.nextComp && G.nextComp.list.length === n)
-      ? G.nextComp.list.slice() : rollComposition(G.wave).list;
-
     G.queue = [];
-    for (let si = 0; si < fleet; si++) {
-      const ship = G.ships[si];
+    for (const ship of G.ships) {
+      // Each mothership launches the wave ITS OWN AGE has earned: a new
+      // arrival opens with a wave-1 manifest and escalates from there,
+      // while the founders keep sending everything their years afford.
+      const age = G.wave - ship.born + 1;
+      const hp = BAL.alienHp(age);
+      const speed = BAL.alienSpeed(age);
+      // the manifest the summary card promised; re-rolled only if stale
+      const comp = (ship.comp && ship.age === age)
+        ? ship.comp.list.slice() : rollComposition(age).list;
+
       const spread = Math.cos(ship.ang);
       const cand = [];
       for (let ci = 0; ci < tiles.cells.length; ci++) {
@@ -3005,9 +3031,7 @@
       // warning about your own stuff rather than an abstract patch of dirt
       const built = cand.filter(ci => towerAt.has(ci) || fighterAt.has(ci));
 
-      // the wave splits across the fleet; the remainder goes to the first ships
-      const share = Math.floor(n / fleet) + (si < n % fleet ? 1 : 0);
-      for (let i = 0; i < share; i++) {
+      while (comp.length) {
         const pool = (built.length && Math.random() < BAL.aimAtBuilt) ? built : cand;
         G.queue.push({ ci: pool[(Math.random() * pool.length) | 0], type: comp.pop(), hp, speed, ship });
       }
@@ -3046,7 +3070,7 @@
       hp: spec.hp * E.hp,
       hp0: spec.hp * E.hp,               // spawn health, for the shield readout
       incoming: 0,
-      dmg: Math.round(BAL.landDamage(G.wave) * E.dmg),
+      dmg: G.hpMax * E.dmg,
       pay: E.pay,
       speed,
       // late-war ships come cloaked: hull hidden, guns blind to them,
@@ -3497,7 +3521,7 @@
 
   function updateHud() {
     const pct = Math.max(0, G.hp / G.hpMax);
-    hpVal.textContent = 'integrity ' + Math.ceil(G.hp);
+    hpVal.textContent = 'planet defense ' + Math.ceil(G.hp);
     hpFill.style.width = (pct * 100) + '%';
     hpFill.classList.toggle('low', pct < 0.34);
     hpVal.classList.toggle('low', pct < 0.34);
@@ -3650,9 +3674,12 @@
     // being cleaned up by a reset or a loss, which set paused false first
     if (waveModal.classList.contains('open') && G.paused) {
       G.paused = false;
-      // the report is done: hand the view to the next problem by
-      // centring the coming drop zone
-      if (G.ships.length && !G.over) swingTo(meanBearing());
+      // the report is done: hand the view to the next problem - a newly
+      // arrived mothership's zone if one just opened, else the fleet's midst
+      if (G.ships.length && !G.over) {
+        swingTo(G.newShip || meanBearing());
+        G.newShip = null;
+      }
     }
     G.paused = false;
     waveModal.classList.remove('open');
@@ -4429,6 +4456,7 @@
     hideMothers();
     G.bearing = null;
     pickBearing();
+    G.newShip = null;                  // the founding ship is not "news"
     // open on the first drop zone, so nobody starts a run by hunting for it
     if (G.ships.length) swingTo(meanBearing());
     setBuild(null);
