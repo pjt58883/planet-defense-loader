@@ -1105,6 +1105,11 @@
     dreadOrbit: 0.88,                       // holding altitude, under every gun ceiling
     dreadDrift: 0.10,                       // radians/s it repositions over the surface
     dreadRate:  2.4, dreadDmg: 18,          // its bombardment gun
+    // the cannon's ball is bolted flat to the hull, so the barrel only
+    // trims a few degrees off vertical - the SHIP flies the firing
+    // solution, and keeps creeping until its prey is nearly beneath it
+    dreadTilt:  0.30,                       // max barrel tilt off vertical, radians
+    dreadTrim:  0.10,                       // keeps repositioning above this aim error
     towerHp:    50,                         // what one emplacement soaks before falling
     jetHp:     60,                          // a fighter's hull
     breakTime:  20,
@@ -2089,7 +2094,7 @@
   //  The dreadnaught's cannon: its own instanced mesh (plus hostile outline)
   //  slung under each hull, slewed onto whatever that ship is shelling.
   let dreadGunMesh = null, dreadGunOutline = null;
-  const DREAD_GUN_DROP = 0.42;      // how far under the hull centre it hangs, in model units
+  let DREAD_GUN_DROP = 0.42;        // ball-centre depth under the hull centre; measured in buildModels
   const DREAD_GUN_K = 0.55;         // cannon scale relative to the hull
 
   //  Energy shields: one faint red shell per shielded enemy, drawn until
@@ -2971,18 +2976,23 @@
           (a.aim || (a.aim = new THREE.Vector3())).copy(prey.seat);
           const over = nearestCell(a.dir);
           if (over !== a.ci || !a.reach) { a.ci = over; a.reach = ringSet(over, BAL.range); }
-          if (a.reach.has(prey.ci)) {
-            // on target: hold station and fire on the cooldown
+          // The ball mount is bolted flat to the hull, so the barrel can
+          // only trim BAL.dreadTilt off vertical. The needed tilt is the
+          // real fire gate, and the ship closes the rest itself.
+          fA2.copy(a.dir).multiplyScalar(RADIUS + a.alt);
+          fA1.copy(prey.seat).sub(fA2).normalize();
+          const tilt = Math.acos(THREE.MathUtils.clamp(-fA1.dot(a.dir), -1, 1));
+          if (a.reach.has(prey.ci) && tilt <= BAL.dreadTilt) {
             a.cool = (a.cool || 0) - dt;
             if (a.cool <= 0) {
               a.cool = BAL.dreadRate;
-              fA2.copy(a.dir).multiplyScalar(RADIUS + a.alt);
-              fA1.copy(prey.seat).sub(fA2).normalize();
               fireShell(fA2, fA1, prey, BAL.dreadDmg);
               muzzleFlash(fA2);
             }
-          } else if (near > 1e-5) {
-            // out of reach: drift over the surface toward the target
+          }
+          if (tilt > BAL.dreadTrim && near > 1e-5) {
+            // still off the vertical: keep creeping toward overhead, and
+            // keep shooting on the way in once the barrel can bear
             fAxis.crossVectors(a.dir, prey.up);
             if (fAxis.lengthSq() > 1e-12) {
               fAxis.normalize();
@@ -3100,17 +3110,34 @@
       a.prev.copy(a.pos);
       a.pos.copy(alienPos);
       dummy.position.copy(alienPos);
-      // nose along the actual flight path, which curves as it swings onto
-      // its column, rather than always straight down
-      fZ.subVectors(a.prev, a.pos);
-      if (fZ.lengthSq() < 1e-12) fZ.copy(a.dir);
-      fZ.normalize();
-      fY.copy(a.dir).addScaledVector(fZ, -a.dir.dot(fZ));
-      if (fY.lengthSq() < 1e-12) fY.set(0, 1, 0);
-      fY.normalize();
-      fX.crossVectors(fY, fZ).normalize();
-      fBasis.makeBasis(fX, fY, fZ);
-      dummy.quaternion.setFromRotationMatrix(fBasis);
+      if (a.type === 'dread') {
+        // a dreadnaught is a flat platform, not a diving ship: it rides
+        // belly to the planet, deck out, bow swung toward its work - the
+        // emplacement it is shelling, or its drop column on approach.
+        // (The hull is authored deck-up: length on X, belly on -Y.)
+        fY.copy(a.dir);
+        if (a.aim) gX.copy(a.aim).sub(a.pos); else gX.copy(a.tgt);
+        gX.addScaledVector(fY, -gX.dot(fY));
+        if (gX.lengthSq() < 1e-10) gX.set(0, 0, 1).addScaledVector(fY, -fY.z);
+        if (gX.lengthSq() < 1e-10) gX.set(1, 0, 0).addScaledVector(fY, -fY.x);
+        gX.normalize();
+        gZ.crossVectors(gX, fY).normalize();
+        fBasis.makeBasis(gX, fY, gZ);
+        dummy.quaternion.setFromRotationMatrix(fBasis);
+        fZ.copy(a.dir);              // station-keeping thrust vents off the deck
+      } else {
+        // nose along the actual flight path, which curves as it swings onto
+        // its column, rather than always straight down
+        fZ.subVectors(a.prev, a.pos);
+        if (fZ.lengthSq() < 1e-12) fZ.copy(a.dir);
+        fZ.normalize();
+        fY.copy(a.dir).addScaledVector(fZ, -a.dir.dot(fZ));
+        if (fY.lengthSq() < 1e-12) fY.set(0, 1, 0);
+        fY.normalize();
+        fX.crossVectors(fY, fZ).normalize();
+        fBasis.makeBasis(fX, fY, fZ);
+        dummy.quaternion.setFromRotationMatrix(fBasis);
+      }
       const vk = tiles.meanInr * BAL.enemies[a.type].size / ENEMY_LEN[a.type];
       dummy.scale.setScalar(vk);
 
@@ -3135,6 +3162,16 @@
         else gDir.copy(a.dir).multiplyScalar(-1);
         if (gDir.lengthSq() < 1e-12) gDir.copy(a.dir).multiplyScalar(-1);
         gDir.normalize();
+        // the flat of the ball stays against the flat of the hull: the
+        // barrel is clamped to slight angles about straight down, and the
+        // ship's own station-keeping lines up anything past that
+        gUp.copy(a.dir).multiplyScalar(-1);
+        if (gUp.angleTo(gDir) > BAL.dreadTilt) {
+          gX.crossVectors(gUp, gDir);
+          if (gX.lengthSq() > 1e-12) {
+            gDir.copy(gUp).applyAxisAngle(gX.normalize(), BAL.dreadTilt);
+          } else gDir.copy(gUp);
+        }
         gUp.copy(a.dir).addScaledVector(gDir, -a.dir.dot(gDir));
         if (gUp.lengthSq() < 1e-12) gUp.copy(fY);
         gUp.normalize();
@@ -3650,13 +3687,36 @@
     batteryOutline = makeAllyOutline(parts.battery.geo, MAX_TURRETS);
     recoveryOutline = makeAllyOutline(parts.recovery.geo, MAX_TURRETS);
 
-    // the dreadnaught's cannon is modelled with its muzzle down -X; lay it
-    // onto -Z once so the draw loop can just point it at the target, and
-    // recentre it on its breech so it swings about the mount, not the muzzle
+    // The dreadnaught's cannon is modelled as a ground turret: ball base
+    // below, barrel riding on top, muzzle down -X. Slung under a hull it
+    // hangs the other way up, so the barrel is laid onto -Z, the assembly
+    // is rolled over, and the pivot is moved to the centre of the ball -
+    // the ball seats against the hull's belly like a socket joint and the
+    // barrel swings about it toward whatever the ship is shelling.
     parts.dreadgun.geo.rotateY(-Math.PI / 2);
     parts.dreadgun.geo.computeBoundingBox();
     const dgb = parts.dreadgun.geo.boundingBox;
-    if (dgb) parts.dreadgun.geo.translate(0, -(dgb.min.y + dgb.max.y) / 2, -dgb.max.z);
+    if (dgb) {
+      const gp = parts.dreadgun.geo.attributes.position;
+      // the ball is the lowest feature: its bottom cap locates its axis...
+      let x0 = 0, z0 = 0, n = 0;
+      for (let i = 0; i < gp.count; i++) {
+        if (gp.getY(i) < dgb.min.y + 0.06) { x0 += gp.getX(i); z0 += gp.getZ(i); n++; }
+      }
+      if (n) { x0 /= n; z0 /= n; }
+      // ...and the widest reach of the lower half measures its radius
+      let ballR = 0;
+      for (let i = 0; i < gp.count; i++) {
+        if (gp.getY(i) < (dgb.min.y + dgb.max.y) / 2) {
+          ballR = Math.max(ballR, Math.hypot(gp.getX(i) - x0, gp.getZ(i) - z0));
+        }
+      }
+      parts.dreadgun.geo.translate(-x0, -(dgb.min.y + ballR), -z0);
+      parts.dreadgun.geo.rotateZ(Math.PI);
+      // hang the ball so its top presses into the hull's own measured belly
+      parts.dread.geo.computeBoundingBox();
+      DREAD_GUN_DROP = -parts.dread.geo.boundingBox.min.y + ballR * DREAD_GUN_K - 0.06;
+    }
     dreadGunMesh = instanced(parts.dreadgun, MAX_ALIENS, true);
     dreadGunOutline = new THREE.InstancedMesh(parts.dreadgun.geo, outlineMat, MAX_ALIENS);
     dreadGunOutline.count = 0;
@@ -3706,6 +3766,21 @@
 
   function setArt(img, key) {
     img.src = thumbs[key];
+  }
+
+  function texturesReady(parts) {
+    const maps = [];
+    for (const n in parts) {
+      const m = parts[n].mat;
+      for (const t of [m.map, m.emissiveMap]) if (t && !t.image) maps.push(t);
+    }
+    if (!maps.length) return Promise.resolve();
+    const t0 = performance.now();
+    return new Promise(res => {
+      const tick = () =>
+        (maps.every(t => t.image) || performance.now() - t0 > 3000) ? res() : setTimeout(tick, 30);
+      tick();
+    });
   }
 
   function makeThumbs(parts) {
@@ -3853,6 +3928,12 @@
       parts[n] = placeholderPart(n);
     }));
     buildModels(parts);
+    // parseGLB's textures decode asynchronously, and a thumb rendered
+    // before its map arrives comes out fully transparent (the stand-in
+    // sampler writes alpha 0). The maps are data: URIs, so waiting for
+    // them costs milliseconds; the timeout covers a map whose load failed
+    // and will never arrive.
+    await texturesReady(parts);
     makeThumbs(parts);
     if (missing.length) console.warn('models missing, using placeholders:', missing.join(', '));
     const gone = missing.filter(n => !OPTIONAL_MODELS.has(n));
