@@ -1062,11 +1062,14 @@
     converge:   0.60,                       // fraction of the fall spent turning
     flameGap:   0.035,                      // seconds between exhaust puffs
     flameLife:  0.30,                       // how long one puff lasts
-    alienHp:    w => 18 + w * 5,
-    alienSpeed: w => 0.069 + w * 0.005,       // sphere radii per second
+    // wave-1 stats are double the game's original tuning; every stat then
+    // compounds 10% per wave, so the late game outgrows a static defense
+    waveRamp:   w => Math.pow(1.10, w - 1),
+    alienHp:    w => 46 * BAL.waveRamp(w),
+    alienSpeed: w => 0.148 * BAL.waveRamp(w),  // sphere radii per second
     spawnGap:   0.55,
     income:     w => 5 * w,                 // five per wave cleared
-    landDamage: 7,
+    landDamage: w => 14 * BAL.waveRamp(w),
     // ---- enemy roster. hp/speed/dmg multiply the wave's base numbers; pay
     //      is the bounty for that type; size is a length in tile inradii.
     //      Waves are all vipers until the entry waves below, then the mix
@@ -2815,7 +2818,7 @@
       hp: spec.hp * E.hp,
       hp0: spec.hp * E.hp,               // spawn health, for the shield readout
       incoming: 0,
-      dmg: Math.round(BAL.landDamage * E.dmg),
+      dmg: Math.round(BAL.landDamage(G.wave) * E.dmg),
       pay: E.pay,
       speed,
       alive: true
