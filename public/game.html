@@ -3581,7 +3581,7 @@
       case 'dread':                                     // a broad gun deck, long axis on Z
         geo = new THREE.BoxGeometry(VIPER_LEN * 0.55, VIPER_LEN * 0.18, VIPER_LEN);
         color = 0x8a2c50; break;
-      case 'dreadgun':                                  // stub barrel, aimed along +X like the GLB
+      case 'dreadgun':                                  // stub barrel, muzzle down -X like the GLB
         geo = new THREE.CylinderGeometry(VIPER_LEN * 0.07, VIPER_LEN * 0.07, VIPER_LEN * 0.5, 8);
         geo.rotateZ(-Math.PI / 2);
         color = 0x8a2c50; break;
@@ -3650,10 +3650,10 @@
     batteryOutline = makeAllyOutline(parts.battery.geo, MAX_TURRETS);
     recoveryOutline = makeAllyOutline(parts.recovery.geo, MAX_TURRETS);
 
-    // the dreadnaught's cannon is modelled with its barrel down +X; lay it
+    // the dreadnaught's cannon is modelled with its muzzle down -X; lay it
     // onto -Z once so the draw loop can just point it at the target, and
     // recentre it on its breech so it swings about the mount, not the muzzle
-    parts.dreadgun.geo.rotateY(Math.PI / 2);
+    parts.dreadgun.geo.rotateY(-Math.PI / 2);
     parts.dreadgun.geo.computeBoundingBox();
     const dgb = parts.dreadgun.geo.boundingBox;
     if (dgb) parts.dreadgun.geo.translate(0, -(dgb.min.y + dgb.max.y) / 2, -dgb.max.z);
