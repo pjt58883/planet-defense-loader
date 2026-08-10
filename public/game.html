@@ -1991,6 +1991,11 @@
   //  keeps it at ~62% of the tile so it sits inside the pad it rides.
   const BATTERY_R = 0.85;      // footprint divisor, model units
   const BATTERY_H = 1.899;     // muzzle = model top, in model units above the seat
+  //  A slimmer barrel, recentred: the launcher runs at 80% size, and its
+  //  seat drops with it so the smaller assembly nests centred in the
+  //  pad's socket instead of perching on the rim.
+  const BATTERY_FIT = 0.80;
+  const BATTERY_SEAT = 0.85;   // fraction of the railgun's ball height it sits at
 
   let batteryMesh = null;
 
@@ -1999,15 +2004,16 @@
     const f = tileFit(ci);
     const up = f.up;
     const kp = f.fit / PAD_R;                 // the railgun's own pad
-    const k = f.fit / BATTERY_R;              // the launcher riding its socket
+    const k = f.fit * BATTERY_FIT / BATTERY_R;   // the launcher riding its socket
+    const seatY = RADIUS + GUN_SEAT * BATTERY_SEAT * kp;
 
     const tur = {
       ci, kind: 'battery', k, level: 1,
       up: up.clone(),
-      seat: up.clone().multiplyScalar(RADIUS + GUN_SEAT * kp),
+      seat: up.clone().multiplyScalar(seatY),
       aimQ: new THREE.Quaternion().setFromUnitVectors(LOCAL_UP, up),
       aimDir: up.clone(),
-      pos: up.clone().multiplyScalar(RADIUS + GUN_SEAT * kp + BATTERY_H * k),
+      pos: up.clone().multiplyScalar(seatY + BATTERY_H * k),
       cover: ringSet(ci, BAL.batteryRange),
       ceiling: BAL.batteryCeiling,
       rate: BAL.batteryRate, dmg: BAL.batteryDmg,
@@ -4114,7 +4120,7 @@
     const kc = PLAT_R * CORE_FIT / CORE_R;
     const RIGS = {
       turret:   () => [part(parts.pad), part(parts.gun, 1, GUN_SEAT)],
-      battery:  () => [part(parts.pad), part(parts.battery, PAD_R / BATTERY_R, GUN_SEAT)],
+      battery:  () => [part(parts.pad), part(parts.battery, PAD_R * BATTERY_FIT / BATTERY_R, GUN_SEAT * BATTERY_SEAT)],
       cannon:   () => [part(parts.hover), part(parts.core, kc, PLAT_DECK),
                        part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
       jet:      () => [part(parts.jetpad, JETPAD_FIT), part(parts.jet, 1, 0.85)],
