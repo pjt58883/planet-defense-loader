@@ -1080,12 +1080,15 @@
     enemies: {
       viper: { hp: 1.0,  speed: 1.0,  dmg: 1.0, pay: 1, size: 0.53 },
       hulk:  { hp: 3.2,  speed: 0.62, dmg: 2.0, pay: 3, size: 0.80, shield: 0.5 },
-      dart:  { hp: 0.55, speed: 0.85, dmg: 1.0, pay: 2, size: 0.42 }
+      dart:  { hp: 0.55, speed: 0.85, dmg: 1.0, pay: 2, size: 0.42 },
+      dread: { hp: 4.0,  speed: 0.45, dmg: 0,   pay: 6, size: 1.05 }
     },
     dartFrom: 4,                            // first wave fast darts appear
     hulkFrom: 7,                            // first wave armoured hulks appear
+    dreadFrom: 10,                          // first wave orbital dreadnaughts appear
     hulkFrac: w => Math.min(0.35, 0.04 + w * 0.02),   // share of the wave
     dartFrac: w => Math.min(0.30, 0.03 + w * 0.02),
+    dreadFrac: w => Math.min(0.10, 0.02 + w * 0.01),
     // ---- dart combat. Darts are interceptor hunters: while a player
     //      fighter flies INSIDE the dart's own landing zone, the dart
     //      abandons its landing run to chase and shoot it, then goes in
@@ -1095,6 +1098,14 @@
     dartClimb: 0.60,                        // radii/s it matches altitude
     dartReach: 4.5,                         // firing range, tile inradii (outranges a jet)
     dartRate:  0.6, dartDmg: 6,             // its gun: whittles a hull, doesn't delete it
+    // ---- dreadnaught. The orbital sieger: it stops its descent at holding
+    //      altitude and shells your emplacements with exactly a railgun's
+    //      ring reach, so whatever it is pounding can always answer back.
+    //      It never lands - the wave does not end until it is shot down.
+    dreadOrbit: 0.88,                       // holding altitude, under every gun ceiling
+    dreadDrift: 0.10,                       // radians/s it repositions over the surface
+    dreadRate:  2.4, dreadDmg: 18,          // its bombardment gun
+    towerHp:    50,                         // what one emplacement soaks before falling
     jetHp:     60,                          // a fighter's hull
     breakTime:  20,
     summaryTime: 5,                         // seconds the wave report lingers
@@ -1349,6 +1360,17 @@
     return f;
   }
 
+  //  Orbital fire needs something to chew through: every emplacement carries
+  //  a hull the dreadnaught's shells wear down. The fields mirror an alien
+  //  target (dir/alt place it in space, incoming reserves shells in flight,
+  //  pay 0 because the enemy earns nothing for the kill) so the bullet code
+  //  runs unchanged against it.
+  function armour(tur) {
+    tur.hp = BAL.towerHp; tur.incoming = 0; tur.alive = true; tur.pay = 0;
+    tur.dir = tur.up; tur.alt = tur.seat.length() - RADIUS;
+    return tur;
+  }
+
   function placeTurret(ci) {
     if (towers.length >= MAX_TURRETS) return null;
     const onRock = cellType[ci] === 'mountain';
@@ -1368,6 +1390,7 @@
       turn: BAL.gunTurn
     };
     tur.pos = up.clone().multiplyScalar(RADIUS + (GUN_SEAT + GUN_TIP) * k);
+    armour(tur);
     towers.push(tur);
     towerAt.set(ci, tur);
 
@@ -1606,6 +1629,7 @@
     const lost = [];
     if (towerAt.has(ci)) {
       const kind = towerAt.get(ci).kind;
+      towerAt.get(ci).alive = false;      // orbital shells still in flight fizzle
       towers.splice(towers.indexOf(towerAt.get(ci)), 1);
       towerAt.delete(ci);
       rebuildEmplacements();
@@ -1729,6 +1753,7 @@
     mScale.setScalar(kc);
     tur.coreMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
 
+    armour(tur);
     towers.push(tur);
     towerAt.set(ci, tur);
     rebuildEmplacements();              // also writes the gun, or it would
@@ -1778,6 +1803,7 @@
       mScale.setScalar(kp);
       tur.padMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
     }
+    armour(tur);
     towers.push(tur);
     towerAt.set(ci, tur);
     rebuildEmplacements();
@@ -1991,7 +2017,8 @@
   //  the viper's length so the size maths is identical either way; when a
   //  real hulk or dart GLB lands in public/assets, measure it and update
   //  its entry here.
-  const ENEMY_LEN = { viper: 1.898, hulk: 1.898, dart: 1.884 };   // dart = viper model's length
+  // dart = viper model's length; dread = its placeholder slab until a GLB lands
+  const ENEMY_LEN = { viper: 1.898, hulk: 1.898, dart: 1.884, dread: 1.884 };
   const VIPER_LEN = 1.884;           // placeholder cones are built to this
 
   // one instanced mesh per enemy type, all drawn from the same alien list
@@ -2009,7 +2036,8 @@
   const enemyMeshes = {
     viper: protoEnemyMesh(0xb45cff, 0x3a0d5c),
     hulk:  protoEnemyMesh(0xc03a28, 0x400d08),
-    dart:  protoEnemyMesh(0x58c8ff, 0x0d2c48)
+    dart:  protoEnemyMesh(0x58c8ff, 0x0d2c48),
+    dread: protoEnemyMesh(0x8a2c50, 0x2c0d1a)
   };
 
   //  Inverted-hull outlines: each enemy mesh gets a back-face twin drawn a
@@ -2418,6 +2446,10 @@
         pQ = new THREE.Quaternion(), pPred = new THREE.Vector3();
 
   function predictAlien(a, tFly, out) {
+    // a dreadnaught on station drifts too slowly to be worth leading
+    if (a.type === 'dread' && a.alt <= BAL.dreadOrbit) {
+      return out.copy(a.dir).multiplyScalar(RADIUS + a.alt);
+    }
     pDir.copy(a.dir);
     let alt = a.alt;
     if (a.hunting) {
@@ -2621,11 +2653,13 @@
     const n = BAL.alienN(w);
     const hf = w >= BAL.hulkFrom ? BAL.hulkFrac(w) : 0;
     const df = w >= BAL.dartFrom ? BAL.dartFrac(w) : 0;
+    const gf = w >= BAL.dreadFrom ? BAL.dreadFrac(w) : 0;
     const list = [];
-    const counts = { viper: 0, hulk: 0, dart: 0 };
+    const counts = { viper: 0, hulk: 0, dart: 0, dread: 0 };
     for (let i = 0; i < n; i++) {
       const r = Math.random();
-      const type = r < hf ? 'hulk' : r < hf + df ? 'dart' : 'viper';
+      const type = r < hf ? 'hulk' : r < hf + df ? 'dart'
+                 : r < hf + df + gf ? 'dread' : 'viper';
       list.push(type);
       counts[type]++;
     }
@@ -2908,6 +2942,44 @@
         }
       }
 
+      // A dreadnaught never lands. It rides the drop down to holding
+      // altitude, then creeps across the sky toward whatever you have
+      // built and shells it - with exactly a railgun's ring reach, so
+      // the emplacement it is pounding can always answer back.
+      if (a.type === 'dread' && a.alt - a.speed * dt <= BAL.dreadOrbit) {
+        a.alt = BAL.dreadOrbit;
+        let prey = null, near = Infinity;
+        for (const t of towers) {
+          if (t.hp - t.incoming <= 0) continue;      // already falling
+          const d = a.dir.angleTo(t.up);
+          if (d < near) { near = d; prey = t; }
+        }
+        if (prey) {
+          const over = nearestCell(a.dir);
+          if (over !== a.ci || !a.reach) { a.ci = over; a.reach = ringSet(over, BAL.range); }
+          if (a.reach.has(prey.ci)) {
+            // on target: hold station and fire on the cooldown
+            a.cool = (a.cool || 0) - dt;
+            if (a.cool <= 0) {
+              a.cool = BAL.dreadRate;
+              fA2.copy(a.dir).multiplyScalar(RADIUS + a.alt);
+              fA1.copy(prey.seat).sub(fA2).normalize();
+              fireShell(fA2, fA1, prey, BAL.dreadDmg);
+              muzzleFlash(fA2);
+            }
+          } else if (near > 1e-5) {
+            // out of reach: drift over the surface toward the target
+            fAxis.crossVectors(a.dir, prey.up);
+            if (fAxis.lengthSq() > 1e-12) {
+              fAxis.normalize();
+              fQ.setFromAxisAngle(fAxis, Math.min(near, BAL.dreadDrift * dt));
+              a.dir.applyQuaternion(fQ).normalize();
+            }
+          }
+        }
+        continue;
+      }
+
       const rem = a.dir.angleTo(a.tgt);
       if (rem > 1e-5) {
         const step = Math.min(rem, a.turn * dt);
@@ -3005,7 +3077,7 @@
 
     // compact and draw, each type into its own mesh
     let live = 0, shields = 0;
-    const drawn = { viper: 0, hulk: 0, dart: 0 };
+    const drawn = { viper: 0, hulk: 0, dart: 0, dread: 0 };
     for (let i = 0; i < aliens.length; i++) {
       const a = aliens[i];
       if (!a.alive) continue;
@@ -3064,6 +3136,17 @@
     updateFighters(dt);
     updateBullets(dt);
     updateSmoke(dt);
+
+    // an emplacement shelled to death from orbit falls alone: unlike a
+    // landing, the hex under it survives and can be built on again
+    for (let i = towers.length - 1; i >= 0; i--) {
+      const t = towers[i];
+      if (t.alive) continue;
+      towers.splice(i, 1);
+      if (towerAt.get(t.ci) === t) towerAt.delete(t.ci);
+      say(TOWER_NAMES[t.kind].toUpperCase() + ' DESTROYED FROM ORBIT');
+      rebuildEmplacements();
+    }
 
     if (G.inWave && !G.queue.length && live === 0) endWave();
   }
@@ -3173,12 +3256,13 @@
   const wcNew = document.getElementById('wcNew');
   const wcNewDesc = document.getElementById('wcNewDesc');
   const modalWarn = document.getElementById('modalWarn');
-  const ENEMY_ONE = { viper: 'dropship', hulk: 'hulk', dart: 'dart' };
+  const ENEMY_ONE = { viper: 'dropship', hulk: 'hulk', dart: 'dart', dread: 'dreadnaught' };
   //  Shown on the card before a type's first wave, so its debut is a
   //  briefing rather than a surprise.
   const ENEMY_INTRO = {
     dart: 'Darts are fast enemy fighters that hunt down your fighters before landing.',
-    hulk: 'Hulks are armoured transports behind energy shields. The shield falls at half health, and a landed hulk hits the ground twice as hard.'
+    hulk: 'Hulks are armoured transports behind energy shields. The shield falls at half health, and a landed hulk hits the ground twice as hard.',
+    dread: 'Dreadnaughts are orbital bombardment ships. One stops at railgun height and shells your buildings with a railgun’s own reach — its wave does not end until it is shot down.'
   };
   let summaryUntil = 0;
   const wcTimers = [];
@@ -3205,7 +3289,7 @@
     // the coming wave is already rolled, so the card prints its manifest
     const parts = [];
     if (G.nextComp) {
-      for (const t of ['viper', 'dart', 'hulk']) {
+      for (const t of ['viper', 'dart', 'hulk', 'dread']) {
         const c = G.nextComp.counts[t];
         if (c) parts.push(c + ' ' + ENEMY_ONE[t] + (c === 1 ? '' : 's'));
       }
@@ -3214,7 +3298,8 @@
 
     // ...announces a debuting enemy type...
     const debut = wave + 1 === BAL.dartFrom ? 'dart'
-                : wave + 1 === BAL.hulkFrom ? 'hulk' : null;
+                : wave + 1 === BAL.hulkFrom ? 'hulk'
+                : wave + 1 === BAL.dreadFrom ? 'dread' : null;
     wcNew.style.display = debut ? '' : 'none';
     if (debut) wcNewDesc.textContent = ENEMY_INTRO[debut];
 
@@ -3390,6 +3475,9 @@
     // the dart flies the retired viper model; a dedicated dart.glb in
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
+    // the dreadnaught's mesh is still inbound; until dread.glb lands in
+    // public/assets it flies the placeholder slab below
+    dread:   ['/assets/dread.glb'],
     battery: ['/assets/battery.glb'],
     // the recovery team: engineers and their outpost, planted on lost ground
     recovery: ['/assets/recovery.glb'],
@@ -3401,10 +3489,9 @@
   };
 
   //  Slots with no shipped GLB yet render as placeholders by design, so a
-  //  missing file is expected and not worth an on-screen warning. Every
-  //  slot has a real model now; new units can add themselves here until
-  //  their GLB lands in public/assets.
-  const OPTIONAL_MODELS = new Set();
+  //  missing file is expected and not worth an on-screen warning. New units
+  //  sit here until their GLB lands in public/assets.
+  const OPTIONAL_MODELS = new Set(['dread']);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
@@ -3444,6 +3531,9 @@
         geo = new THREE.ConeGeometry(VIPER_LEN * 0.12, VIPER_LEN, 4);
         geo.rotateX(-Math.PI / 2);                      // nose down -Z
         color = 0x58c8ff; break;
+      case 'dread':                                     // a broad gun deck, long axis on Z
+        geo = new THREE.BoxGeometry(VIPER_LEN * 0.55, VIPER_LEN * 0.18, VIPER_LEN);
+        color = 0x8a2c50; break;
       case 'battery':
         geo = new THREE.CylinderGeometry(BATTERY_R * 0.55, BATTERY_R, BATTERY_H, 6);
         geo.translate(0, BATTERY_H / 2, 0);             // base at y=0
@@ -3581,6 +3671,7 @@
       dropship: () => [part(parts.viper)],
       dart:     () => [part(parts.dart)],
       hulk:     () => [part(parts.hulk)],
+      dread:    () => [part(parts.dread)],
       mothership: () => [part(parts.mother)]
     };
     const box = new THREE.Box3(), sph = new THREE.Sphere();
@@ -3626,6 +3717,8 @@
      'Fast interceptor. Hunts your fighters inside its own landing zone before landing; only a clear sky sends it groundward.'],
     ['hulk', 'Hulk', null,
      'Armoured transport behind an energy shield. The shield falls at half health, and a landed hulk hits the ground twice as hard.'],
+    ['dread', 'Dreadnaught', null,
+     'Orbital bombardment ship. Holds station at railgun height and shells your emplacements with a railgun’s own reach — it never lands, so its wave ends only when it falls.'],
     ['mothership', 'Mothership', null,
      'Holds station off-planet and launches the wave into its drop zone. More arrive as the waves go on, each picking its own bearing.']
   ];

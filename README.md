@@ -36,8 +36,8 @@ full models anywhere else, download the GLBs (e.g. from the Lovable editor)
 and drop them into `public/assets/`. Any model that can't be loaded renders
 as a simple placeholder shape — the game stays fully playable either way.
 
-Three additional slots have no shipped model yet and use placeholders by
-design: `hulk.glb` and `dart.glb` (enemy types) and `battery.glb` (the
-missile battery). Drop a GLB with that name into `public/assets/` to fill
-one, and update its measured length/footprint constant in `game.html`
-(`ENEMY_LEN`, `BATTERY_R`/`BATTERY_H`).
+Two slots have no shipped model yet and use placeholders by design:
+`dart.glb` (the dart flies the retired viper model) and `dread.glb` (the
+dreadnaught flies a placeholder slab). Drop a GLB with that name into
+`public/assets/` to fill one, and update its measured length constant in
+`game.html` (`ENEMY_LEN`).
