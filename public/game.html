@@ -1143,7 +1143,13 @@
     recoveryRate: 0.5, recoveryDmg: 4,
     batteryRange: 3,                        // rings; no mountain bonus
     batteryCeiling: 1.30,                   // engages higher than any turret
-    batteryRate: 2.2, batteryDmg: 30,       // one slow, heavy shell
+    // a burst attacker: five tubes, each reloading on its own clock. It
+    // ripples off whatever is loaded, retargeting per launch, then the
+    // empty tubes come back one by one - slower per tube than the old
+    // single launcher, ferocious in a full salvo.
+    batteryTubes: 5,
+    batterySalvo: 0.18,                     // seconds between launches in a ripple
+    batteryRate: 3.0, batteryDmg: 30,       // per-tube reload; the payload is unchanged
     gunTurn:    4.2,                        // radians/s a railgun mount slews
     batteryTurn: 1.8,                       // the launcher swings heavier
     aimSettle:  0.05,                       // radians off-solution a mount may fire at
@@ -1441,6 +1447,9 @@
   //  platform deck in jetpad.glb, measured at its widest footprint radius
   //  (half its long axis) so it spans the tile edge to edge.
   const JETPAD_R = 0.952;
+  //  The deck reads better with air around it: the pad takes 80% of the
+  //  tile instead of spanning it edge to edge.
+  const JETPAD_FIT = 0.80;
 
   //  Deck top and jet belly clearance, both remeasured from the loaded
   //  models in buildModels so a parked jet sits ON the deck, not in it.
@@ -1494,7 +1503,7 @@
       emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
     };
     // the pad that claims the hex, laid flat on the tile like a turret's
-    jf.padK = f0.fit / JETPAD_R;
+    jf.padK = f0.fit * JETPAD_FIT / JETPAD_R;
     mPos.copy(home).multiplyScalar(RADIUS - f0.fit * 0.04);
     mQuat.setFromUnitVectors(LOCAL_UP, home);
     mScale.setScalar(jf.padK);
@@ -1894,6 +1903,7 @@
       ceiling: BAL.batteryCeiling,
       rate: BAL.batteryRate, dmg: BAL.batteryDmg,
       splashDmg: BAL.splashDmg, cool: 0,
+      tubes: new Array(BAL.batteryTubes).fill(0),   // per-tube reload timers
       turn: BAL.batteryTurn
     };
     if (modelsOK) {
@@ -3102,6 +3112,8 @@
     // is the shot that is actually about to cost you something.
     for (const t of towers) {
       t.cool -= dt;
+      // a battery's five tubes reload independently of the salvo gate
+      if (t.tubes) for (let j = 0; j < t.tubes.length; j++) t.tubes[j] -= dt;
       let best = null;
       for (const a of aliens) {
         if (!a.alive || a.alt > t.ceiling) continue;
@@ -3130,7 +3142,18 @@
       // a gun can only shoot where its barrel points: hold fire until the
       // swing has settled onto the firing solution
       if (t.aimDir.angleTo(aim) > BAL.aimSettle) continue;
-      t.cool = t.rate;
+      if (t.tubes) {
+        // fire from the first loaded tube; the ripple gate spaces the
+        // launches, and each launch re-runs targeting, so a salvo walks
+        // across the wave instead of dogpiling one doomed pod
+        let tube = -1;
+        for (let j = 0; j < t.tubes.length; j++) if (t.tubes[j] <= 0) { tube = j; break; }
+        if (tube < 0) continue;                     // every tube reloading
+        t.tubes[tube] = t.rate;
+        t.cool = BAL.batterySalvo;
+      } else {
+        t.cool = t.rate;
+      }
       // both kinds fire from the tip of whatever is doing the aiming
       muzzle.copy(t.aimDir)
         .multiplyScalar((t.kind === 'battery' ? BATTERY_H : GUN_TIP) * t.k)
@@ -3545,7 +3568,9 @@
       unitDmgLabel.textContent = 'damage';
       unitDmg.textContent = t.splashDmg ? t.dmg + ' +' + t.splashDmg + ' splash' : t.dmg;
       unitRateRow.style.display = '';
-      unitRate.textContent = (1 / t.rate).toFixed(1) + '/s';
+      unitRate.textContent = t.tubes
+        ? t.tubes.length + ' tubes · ' + (1 / t.rate).toFixed(2) + '/s each'
+        : (1 / t.rate).toFixed(1) + '/s';
     } else if (jf) {
       unitName.textContent = 'Fighter';
       unitDmgLabel.textContent = 'damage';
@@ -3894,7 +3919,7 @@
       battery:  () => [part(parts.pad), part(parts.battery, PAD_R / BATTERY_R, GUN_SEAT)],
       cannon:   () => [part(parts.hover), part(parts.core, kc, PLAT_DECK),
                        part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
-      jet:      () => [part(parts.jetpad), part(parts.jet, 1, 0.85)],
+      jet:      () => [part(parts.jetpad, JETPAD_FIT), part(parts.jet, 1, 0.85)],
       recovery: () => [part(parts.recovery)],
       dropship: () => [part(parts.viper)],
       dart:     () => [part(parts.dart)],
@@ -3940,7 +3965,7 @@
     ['cannon', 'Sea Cannon', BAL.cannonCost,
      'The water build: a floating railgun with longer reach, a heavier slug and a higher ceiling than a land turret.'],
     ['battery', 'Missile Battery', BAL.batteryCost,
-     'Slow homing missiles that burst on impact and splash everything nearby. Engages highest of all; the launcher swings heavy.'],
+     'Five homing missiles on independent reloads: it ripples off a full salvo, each burst splashing everything near the hit, then the tubes come back one by one. Engages highest of all.'],
     ['recovery', 'Recovery Team', BAL.recoveryCost,
      'The only thing that builds on dead ground. Digs a crossed-out tile back out, one wave of work per wave it has been lost, and defends itself with sidearms.'],
     ['side', 'The enemy'],
