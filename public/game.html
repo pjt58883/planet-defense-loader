@@ -228,6 +228,24 @@
     animation:hpPulse .8s ease-in-out infinite;
   }
   @keyframes hpPulse{ 50%{ filter:brightness(1.55) } }
+  /* the landing alarm: BREACH! strobes across the bar that just paid for it */
+  .breach{
+    position:absolute;inset:0;z-index:1;
+    display:flex;align-items:center;justify-content:center;
+    font-size:21px;letter-spacing:.34em;text-indent:.34em;
+    color:#fff;text-shadow:0 0 10px #ff2f2f,0 1px 2px #000;
+    opacity:0;pointer-events:none;
+  }
+  .breach.on{animation:breach 1.2s linear}
+  @keyframes breach{
+    0%,22%,44%{opacity:1}
+    12%,34%,100%{opacity:0}
+    66%{opacity:1}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .breach.on{animation:breachHold 1.2s linear}
+    @keyframes breachHold{ 0%,80%{opacity:1} 100%{opacity:0} }
+  }
   .hplabel{
     font-size:22px;
     letter-spacing:.20em;color:var(--ink);
@@ -473,6 +491,7 @@
   <div class="hplabel" id="hpVal">planet defense 100</div>
   <div class="hpbar">
     <div class="hpfill" id="hpFill" style="width:100%"></div>
+    <div class="breach" id="breachFlash">Breach!</div>
   </div>
   <div class="stats">
     <span class="stat">wave<b id="waveVal">0</b></span>
@@ -3237,6 +3256,7 @@
         a.alive = false;
         G.landed++;
         G.hp -= a.dmg;
+        breachFlash();
         const lost = demolish(a.ci);
         killHex(a.ci);
         say(lost || 'HEX DESTROYED');
@@ -3513,6 +3533,15 @@
     const b = document.getElementById(id);
     b.querySelector('.cost').textContent = cost;
     b.title += ' (' + cost + ' gold)';
+  }
+
+  // a landing strobes BREACH! across the bar that just paid for it; the
+  // reflow restart lets back-to-back landings each get their own flash
+  const breachEl = document.getElementById('breachFlash');
+  function breachFlash() {
+    breachEl.classList.remove('on');
+    void breachEl.offsetWidth;
+    breachEl.classList.add('on');
   }
 
   // every purchase and upgrade goes through here, so the loss card can
