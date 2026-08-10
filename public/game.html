@@ -1442,6 +1442,10 @@
   //  (half its long axis) so it spans the tile edge to edge.
   const JETPAD_R = 0.952;
 
+  //  Deck top and jet belly clearance, both remeasured from the loaded
+  //  models in buildModels so a parked jet sits ON the deck, not in it.
+  let JETPAD_H = 0.16, JET_BELLY = 0.20;
+  function restAlt(f) { return JETPAD_H * f.padK + JET_BELLY * f.k; }
 
   let jetMesh = null, jetOutlineMesh = null, jetpadMesh = null, jetpadOutline = null;
 
@@ -1490,10 +1494,19 @@
       emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
     };
     // the pad that claims the hex, laid flat on the tile like a turret's
+    jf.padK = f0.fit / JETPAD_R;
     mPos.copy(home).multiplyScalar(RADIUS - f0.fit * 0.04);
     mQuat.setFromUnitVectors(LOCAL_UP, home);
-    mScale.setScalar(f0.fit / JETPAD_R);
+    mScale.setScalar(jf.padK);
     jf.padMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
+    // flying if built mid-wave; built in a break, it starts ON its pad
+    jf.state = 'flying';
+    if (!G.inWave) {
+      jf.state = 'landed';
+      jf.dir = home.clone();
+      jf.alt = restAlt(jf);
+      jf.prevPos.copy(jf.dir).multiplyScalar(RADIUS + jf.alt);
+    }
     fighters.push(jf);
     fighterAt.set(ci, jf);
     if (jetMesh) jetMesh.count = fighters.length;
@@ -1506,6 +1519,24 @@
     if (jetMesh) jetMesh.count = 0;
     if (jetOutlineMesh) jetOutlineMesh.count = 0;
     if (jetpadMesh) { jetpadMesh.count = 0; jetpadOutline.count = 0; }
+  }
+
+  //  One pose writer for every fighter state: nose down the given
+  //  direction, wings squared to the local up, banked by f.bank.
+  function writeJetPose(i, f, noseDir) {
+    fZ.copy(noseDir).multiplyScalar(-1);         // model nose is -Z
+    fY.copy(f.dir).addScaledVector(fZ, -f.dir.dot(fZ));
+    if (fY.lengthSq() < 1e-12) fY.set(0, 1, 0);
+    fY.normalize();
+    fX.crossVectors(fY, fZ).normalize();
+    fBasis.makeBasis(fX, fY, fZ);
+    fQ.setFromRotationMatrix(fBasis);
+    fRoll.setFromAxisAngle(fZ, -f.bank);
+    fQ.premultiply(fRoll);
+    mScale.setScalar(f.k);
+    jetMesh.setMatrixAt(i, mMat.compose(fPos, fQ, mScale));
+    mScale.setScalar(f.k * OUTLINE_SCALE);
+    jetOutlineMesh.setMatrixAt(i, mMat.compose(fPos, fQ, mScale));
   }
 
   function updateFighters(dt) {
@@ -1541,10 +1572,56 @@
         if (!best || a.alt < best.alt) best = a;
       }
 
+      // Between waves the wing stands down: each jet makes for its pad,
+      // hovers in over the deck, settles onto it, and sits there - engines
+      // off - until the next wave scrambles the lot back into the air.
+      if (G.inWave && f.state !== 'flying') f.state = 'flying';
+      if (!G.inWave && !best) {
+        if (f.state === 'flying' && f.dir.angleTo(f.home) < f.radius * 0.30) f.state = 'settling';
+        if (f.state === 'settling') {
+          // hover in: slide over the pad and sink onto the deck
+          const rest = restAlt(f);
+          const dHome = f.dir.angleTo(f.home);
+          if (dHome > 1e-6) {
+            fAxis.crossVectors(f.dir, f.home);
+            if (fAxis.lengthSq() > 1e-12) {
+              fAxis.normalize();
+              fQ.setFromAxisAngle(fAxis, Math.min(dHome, BAL.jetSpeed * 0.35 * dt));
+              f.dir.applyQuaternion(fQ).normalize();
+              f.head.applyQuaternion(fQ);
+              f.head.addScaledVector(f.dir, -f.head.dot(f.dir)).normalize();
+            }
+          }
+          f.alt += THREE.MathUtils.clamp(rest - f.alt, -BAL.jetClimb * 0.6 * dt, BAL.jetClimb * 0.6 * dt);
+          if (dHome < Math.max(0.02 * f.radius, 1e-4) && Math.abs(f.alt - rest) < 1e-3) {
+            f.state = 'landed';
+            f.dir.copy(f.home);
+          }
+        }
+        if (f.state === 'landed') {
+          f.dir.copy(f.home);
+          f.alt = restAlt(f);
+        }
+        if (f.state !== 'flying') {
+          // grounded or nearly: wings level, nose held on the heading, and
+          // the true-path smoothing is parked with it for a clean scramble
+          f.bank += (0 - f.bank) * Math.min(1, dt * 5);
+          fPos.copy(f.dir).multiplyScalar(RADIUS + f.alt);
+          f.prevPos.copy(fPos);
+          f.vel.copy(f.head);
+          if (jetMesh) writeJetPose(i, f, f.head);
+          continue;
+        }
+      }
+
       let wantAlt;
       if (best) {
         fWant.copy(best.dir);
         wantAlt = Math.max(best.alt, BAL.jetFloor);
+      } else if (!G.inWave) {
+        // stand-down but still far out: make straight for the pad, low
+        fWant.copy(f.home);
+        wantAlt = Math.max(BAL.jetCruise * 0.5, restAlt(f));
       } else {
         // idle: circle the home tile so the unit reads as patrolling
         f.phase += dt * BAL.jetSpeed / Math.max(f.radius * 0.7, 1e-3);
@@ -1626,21 +1703,10 @@
           else f.vel.copy(f.head);
         }
         f.prevPos.copy(fPos);
-        fZ.copy(f.vel).multiplyScalar(-1);         // model nose is -Z
-        fY.copy(f.dir).addScaledVector(fZ, -f.dir.dot(fZ));
-        if (fY.lengthSq() < 1e-12) fY.set(0, 1, 0);
-        fY.normalize();
-        fX.crossVectors(fY, fZ).normalize();
-        fBasis.makeBasis(fX, fY, fZ);
-        fQ.setFromRotationMatrix(fBasis);
-        // the one cosmetic left is the bank roll - the nose itself stays
+        // the one cosmetic on top is the bank roll - the nose itself stays
         // exactly on the flight path, never yawed off it
-        fRoll.setFromAxisAngle(fZ, -f.bank);
-        fQ.premultiply(fRoll);
-        mScale.setScalar(f.k);
-        jetMesh.setMatrixAt(i, mMat.compose(fPos, fQ, mScale));
-        mScale.setScalar(f.k * OUTLINE_SCALE);
-        jetOutlineMesh.setMatrixAt(i, mMat.compose(fPos, fQ, mScale));
+        writeJetPose(i, f, f.vel);
+        fZ.copy(f.vel).multiplyScalar(-1);         // exhaust out the back
 
         f.emit += dt;
         while (f.emit >= BAL.flameGap) {
@@ -2520,6 +2586,8 @@
   }
 
   function predictFighter(f, tFly, out) {
+    // a jet parked on (or settling onto) its pad is not going anywhere
+    if (f.state !== 'flying') return out.copy(f.dir).multiplyScalar(RADIUS + f.alt);
     // the jet flies its great circle at a known rate
     pDir.copy(f.dir);
     pAxis.crossVectors(f.dir, f.head);
@@ -3686,10 +3754,16 @@
     recoveryMesh = instanced(parts.recovery, MAX_TURRETS, false);
     rebuildRecoveryMesh();
 
-    // the fighter's landing pad: base at y=0 like the other ground plates
+    // the fighter's landing pad: base at y=0 like the other ground plates,
+    // and the deck top measured so a parked jet rests on it exactly
     parts.jetpad.geo.computeBoundingBox();
     const jpb = parts.jetpad.geo.boundingBox;
-    if (jpb) parts.jetpad.geo.translate(0, -jpb.min.y, 0);
+    if (jpb) {
+      parts.jetpad.geo.translate(0, -jpb.min.y, 0);
+      JETPAD_H = jpb.max.y - jpb.min.y;
+    }
+    parts.jet.geo.computeBoundingBox();
+    if (parts.jet.geo.boundingBox) JET_BELLY = -parts.jet.geo.boundingBox.min.y;
     jetpadMesh = instanced(parts.jetpad, MAX_TURRETS, true);
     jetpadOutline = makeAllyOutline(parts.jetpad.geo, MAX_TURRETS);
 
