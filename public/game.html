@@ -1123,7 +1123,6 @@
     jetRing:    4,                          // patrol circle, in tile rings
     jetSpeed:   1.20,                       // radians of arc per second
     jetTurn:    2.2,                        // radians per second of heading change
-    jetNoseLead: 0.55,                      // radians the nose angles into a full-rate turn
     jetClimb:   1.00,
     jetCruise:  0.16,                       // idle altitude
     jetFloor:   0.06,                       // never dives below this
@@ -1438,14 +1437,17 @@
   const fighters = [];
   const fighterAt = new Map();
   const JET_LEN = 1.898;
+  //  The landing pad that marks a fighter's home hex. The placeholder is a
+  //  flat slab spanning the tile; when jetpad.glb lands in public/assets,
+  //  measure its widest footprint radius and update JETPAD_R to match.
+  const JETPAD_R = 1.0;
 
-  let jetMesh = null, jetOutlineMesh = null;
+  let jetMesh = null, jetOutlineMesh = null, jetpadMesh = null, jetpadOutline = null;
 
   const fA1 = new THREE.Vector3(), fA2 = new THREE.Vector3(), fWant = new THREE.Vector3(),
         fAxis = new THREE.Vector3(), fQ = new THREE.Quaternion(), fPos = new THREE.Vector3(),
         fX = new THREE.Vector3(), fY = new THREE.Vector3(), fZ = new THREE.Vector3(),
-        fBasis = new THREE.Matrix4(), fRoll = new THREE.Quaternion(),
-        fLead = new THREE.Quaternion(), fPitch = new THREE.Quaternion();
+        fBasis = new THREE.Matrix4(), fRoll = new THREE.Quaternion();
   // scratch for the dreadnaught's slung cannon
   const gPos = new THREE.Vector3(), gDir = new THREE.Vector3(), gUp = new THREE.Vector3(),
         gX = new THREE.Vector3(), gZ = new THREE.Vector3(), gBasis = new THREE.Matrix4();
@@ -1479,9 +1481,18 @@
       ceiling: BAL.jetCeiling,
       dmg: BAL.jetDmg, level: 1,
       hp: BAL.jetHp, incoming: 0, alive: true, pay: 0,   // darts hunt it
-      cool: 0, bank: 0, pitch: 0,
+      cool: 0, bank: 0,
+      // where it drew last frame and the smoothed true flight direction,
+      // which is what the nose actually follows
+      prevPos: start.clone().multiplyScalar(RADIUS + BAL.jetCruise),
+      vel: head.clone(),
       emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
     };
+    // the pad that claims the hex, laid flat on the tile like a turret's
+    mPos.copy(home).multiplyScalar(RADIUS - f0.fit * 0.04);
+    mQuat.setFromUnitVectors(LOCAL_UP, home);
+    mScale.setScalar(f0.fit / JETPAD_R);
+    jf.padMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
     fighters.push(jf);
     fighterAt.set(ci, jf);
     if (jetMesh) jetMesh.count = fighters.length;
@@ -1493,6 +1504,7 @@
     fighterAt.clear();
     if (jetMesh) jetMesh.count = 0;
     if (jetOutlineMesh) jetOutlineMesh.count = 0;
+    if (jetpadMesh) { jetpadMesh.count = 0; jetpadOutline.count = 0; }
   }
 
   function updateFighters(dt) {
@@ -1505,6 +1517,14 @@
       }
     }
     if (jetMesh) jetMesh.count = fighters.length;
+
+    // every based fighter parks its landing pad on its home hex
+    if (jetpadMesh) {
+      for (let i = 0; i < fighters.length; i++) jetpadMesh.setMatrixAt(i, fighters[i].padMat);
+      jetpadMesh.count = fighters.length;
+      jetpadMesh.instanceMatrix.needsUpdate = true;
+      mirrorOutline(jetpadMesh, jetpadOutline);
+    }
 
     for (let i = 0; i < fighters.length; i++) {
       const f = fighters[i];
@@ -1578,10 +1598,6 @@
 
       const dv = THREE.MathUtils.clamp(wantAlt - f.alt, -BAL.jetClimb * dt, BAL.jetClimb * dt);
       f.alt += dv;
-      // pitch follows the actual climb rate, so a diving jet noses down
-      // into the dive instead of sliding down flat
-      const pitchGoal = Math.atan2(dv / Math.max(dt, 1e-4), BAL.jetSpeed * (RADIUS + f.alt));
-      f.pitch += (pitchGoal - f.pitch) * Math.min(1, dt * 5);
 
       // guns are short ranged on purpose: it has to actually get there
       fPos.copy(f.dir).multiplyScalar(RADIUS + f.alt);
@@ -1597,21 +1613,27 @@
       }
 
       if (jetMesh) {
-        fZ.copy(f.head).multiplyScalar(-1);        // model nose is -Z
-        fY.copy(f.dir).addScaledVector(fZ, -f.dir.dot(fZ)).normalize();
+        // The nose follows the ACTUAL path. Everything that moves the jet -
+        // the turn, the climb, even the patrol boundary shoving it back
+        // inside its circle - lands in the frame-to-frame displacement, so
+        // pointing the nose down the (smoothed) displacement means nothing
+        // can read as sliding: however the jet moved, the nose leads it.
+        fA1.subVectors(fPos, f.prevPos);
+        if (fA1.lengthSq() > 1e-14) {
+          f.vel.lerp(fA1.normalize(), Math.min(1, dt * 14));
+          if (f.vel.lengthSq() > 1e-8) f.vel.normalize();
+          else f.vel.copy(f.head);
+        }
+        f.prevPos.copy(fPos);
+        fZ.copy(f.vel).multiplyScalar(-1);         // model nose is -Z
+        fY.copy(f.dir).addScaledVector(fZ, -f.dir.dot(fZ));
+        if (fY.lengthSq() < 1e-12) fY.set(0, 1, 0);
+        fY.normalize();
         fX.crossVectors(fY, fZ).normalize();
         fBasis.makeBasis(fX, fY, fZ);
         fQ.setFromRotationMatrix(fBasis);
-        // The velocity is always exactly along the heading, so without help
-        // the nose stays tangent to the path and a turning jet reads as
-        // sliding sideways about its own centre. Yawing the VISUAL ahead of
-        // the velocity by the smoothed turn rate makes the nose angle into
-        // the turn the way an aircraft's does; the flight path is untouched.
-        fLead.setFromAxisAngle(f.dir, f.bank * BAL.jetNoseLead);
-        fQ.premultiply(fLead);
-        // nose up in a climb, down in a dive, matching the real climb rate
-        fPitch.setFromAxisAngle(fX, f.pitch);
-        fQ.premultiply(fPitch);
+        // the one cosmetic left is the bank roll - the nose itself stays
+        // exactly on the flight path, never yawed off it
         fRoll.setFromAxisAngle(fZ, -f.bank);
         fQ.premultiply(fRoll);
         mScale.setScalar(f.k);
@@ -1633,8 +1655,9 @@
     }
   }
 
-  //  A landing flattens EVERYTHING on the tile: a hex can host a tower and
-  //  base a fighter at once, and both die with the ground under them.
+  //  A landing flattens EVERYTHING on the tile. Since the landing pad, a
+  //  hex holds one occupant, but the sweep stays general so old saves or
+  //  future stacking cannot leak a survivor.
   function demolish(ci) {
     const lost = [];
     if (towerAt.has(ci)) {
@@ -3535,6 +3558,8 @@
     // the dart flies the retired viper model; a dedicated dart.glb in
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
+    // the fighter's landing pad, marking the hex it is based from
+    jetpad:  ['/assets/jetpad.glb'],
     // the dreadnaught: hull and the bombardment cannon slung under it. The
     // cannon is a separate part so it can slew onto its target in flight.
     dread:    ['/assets/dread.glb'],
@@ -3552,7 +3577,7 @@
   //  Slots with no shipped GLB yet render as placeholders by design, so a
   //  missing file is expected and not worth an on-screen warning. New units
   //  sit here until their GLB lands in public/assets.
-  const OPTIONAL_MODELS = new Set();
+  const OPTIONAL_MODELS = new Set(['jetpad']);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
@@ -3572,6 +3597,10 @@
         geo = new THREE.ConeGeometry(JET_LEN * 0.22, JET_LEN, 6);
         geo.rotateX(-Math.PI / 2);                      // nose down -Z
         color = 0xd0d6df; break;
+      case 'jetpad':                                    // flat square deck, base at y=0
+        geo = new THREE.BoxGeometry(JETPAD_R * 2, 0.16, JETPAD_R * 2);
+        geo.translate(0, 0.08, 0);
+        color = 0x55606e; break;
       case 'mother':
         geo = new THREE.CylinderGeometry(MOTHER_LEN * 0.18, MOTHER_LEN * 0.26, MOTHER_LEN, 8);
         geo.rotateX(-Math.PI / 2);                      // long axis on Z, nose -Z
@@ -3655,6 +3684,13 @@
     if (rbb) parts.recovery.geo.translate(0, -rbb.min.y, 0);
     recoveryMesh = instanced(parts.recovery, MAX_TURRETS, false);
     rebuildRecoveryMesh();
+
+    // the fighter's landing pad: base at y=0 like the other ground plates
+    parts.jetpad.geo.computeBoundingBox();
+    const jpb = parts.jetpad.geo.boundingBox;
+    if (jpb) parts.jetpad.geo.translate(0, -jpb.min.y, 0);
+    jetpadMesh = instanced(parts.jetpad, MAX_TURRETS, true);
+    jetpadOutline = makeAllyOutline(parts.jetpad.geo, MAX_TURRETS);
 
     // green twins for everything the player builds
     padOutline = makeAllyOutline(parts.pad.geo, MAX_TURRETS);
@@ -3783,7 +3819,7 @@
       battery:  () => [part(parts.pad), part(parts.battery, PAD_R / BATTERY_R, GUN_SEAT)],
       cannon:   () => [part(parts.hover), part(parts.core, kc, PLAT_DECK),
                        part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
-      jet:      () => [part(parts.jet)],
+      jet:      () => [part(parts.jetpad), part(parts.jet, 1, 0.85)],
       recovery: () => [part(parts.recovery)],
       dropship: () => [part(parts.viper)],
       dart:     () => [part(parts.dart)],
@@ -3825,7 +3861,7 @@
     ['turret', 'Railgun Turret', BAL.turretCost,
      'The line gun. Leads its shots and slews fast; mountains stretch its reach and ceiling.'],
     ['jet', 'Fighter', BAL.jetCost,
-     'Patrols a circle around its base hex and dives on anything inside it. Based, not built - it shares its hex with a tower. Darts hunt it.'],
+     'Patrols a circle around its base hex and dives on anything inside it. Its landing pad claims the hex it flies from. Darts hunt it.'],
     ['cannon', 'Sea Cannon', BAL.cannonCost,
      'The water build: a floating railgun with longer reach, a heavier slug and a higher ceiling than a land turret.'],
     ['battery', 'Missile Battery', BAL.batteryCost,
@@ -4015,11 +4051,12 @@
     const wet = cellType[ci] === 'lake';
     if (wet && G.build !== 'fighter' && G.build !== 'cannon') { say('CANNOT BUILD ON WATER'); return; }
     if (!wet && G.build === 'cannon') { say('SEA CANNON NEEDS WATER'); return; }
-    // a fighter is BASED on a hex, not built on it: it neither blocks a
-    // tower nor is blocked by one. Only a second fighter is refused.
+    // a fighter's landing pad claims its hex outright now: pad and tower
+    // can no longer share a tile
     if (G.build === 'fighter') {
       if (fighterAt.has(ci)) { say('FIGHTER ALREADY BASED HERE'); return; }
-    } else if (towerAt.has(ci)) {
+      if (towerAt.has(ci)) { say('TILE OCCUPIED'); return; }
+    } else if (towerAt.has(ci) || fighterAt.has(ci)) {
       say('TILE OCCUPIED'); return;
     }
 
