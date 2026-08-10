@@ -1037,7 +1037,7 @@
     inWave: false, breakLeft: 20, spawnTimer: 0, queue: [],
     ready: false, over: false, started: false, paused: false,
     build: null, bearing: null, nextComp: null,
-    zoneAng: 0.38, shipDist: 1.55, landed: 0, ships: []
+    shipDist: 1.55, landed: 0, ships: []
   };
 
   // Every number that decides whether the game is fair lives here and nowhere
@@ -1054,8 +1054,9 @@
     // learning the ground rather than surviving the full flood
     alienN:     w => w <= 5 ? (10 + w * 6) / 2 : 10 + w * 6,
     rampWaves:  22,                         // waves to reach the widest launch
-    zoneMin:    0.38,                       // launch cone half-angle, radians
     zoneMax:    1.45,                       // ~83 degrees, most of a hemisphere
+    zoneRings:  2,                          // hex rings a freshly claimed zone covers
+    zoneGrow:   0.055,                      // radians its radius adds per wave aboard
     shipNear:   3.10,                       // mothership distance, sphere radii
     shipFar:    6.60,
     motherSize: 0.20,                       // length in sphere radii
@@ -1153,7 +1154,6 @@
     upgradeCost: (base, lvl) => Math.ceil(base * 0.6 * lvl),   // lvl being bought
     upgradeDmg: 1.5,                        // per level, anything that shoots
     upgradeCeil: 0.10,                      // per level, turret-family ceilings
-    driftMin: 0.30, driftMax: 0.85,         // radians the drop zone walks per wave
     autoFace: false,                        // swing the planet to face a new drop zone
     dryWaves: 10,                           // waves that get a mostly-dry landing zone
     dryMax:   0.25                          // most water a zone may hold during them
@@ -1682,7 +1682,6 @@
   function ramp(w) {
     return Math.min(1, Math.max(0, (w - 1) / Math.max(1, BAL.rampWaves - 1)));
   }
-  function zoneAngleFor(w) { const t = ramp(w); return BAL.zoneMin + (BAL.zoneMax - BAL.zoneMin) * t; }
   function shipDistFor(w)  { const t = ramp(w); return BAL.shipNear + (BAL.shipFar - BAL.shipNear) * t; }
 
   function placeMothers() {
@@ -2617,15 +2616,6 @@
     zoneCaps.push(m);
   }
 
-  // The bearing WALKS, it does not teleport. A fresh random point on the
-  // sphere every wave made the run a lottery: two zones near each other and
-  // your existing turrets carry, two zones apart and you owe a whole new
-  // defence you cannot afford. Simulated over hundreds of runs that swamped
-  // every other number in the game. Drifting the bearing turns the same
-  // randomness into a front line that walks around the planet, so the
-  // question becomes how far you extend rather than how lucky you were.
-  const driftAxis = new THREE.Vector3(), qDrift = new THREE.Quaternion();
-
   //  Early waves must not open on an ocean. A zone that is mostly water has
   //  almost nowhere to build, so the wave is decided before you touch it,
   //  and losing to the map roll is not the same as losing to the game.
@@ -2654,16 +2644,6 @@
     return d;
   }
 
-  function driftFrom(bearing) {
-    driftAxis.set(Math.random()*2-1, Math.random()*2-1, Math.random()*2-1);
-    driftAxis.addScaledVector(bearing, -driftAxis.dot(bearing));
-    if (driftAxis.lengthSq() < 1e-8) driftAxis.set(1, 0, 0);
-    driftAxis.normalize();
-    const step = BAL.driftMin + Math.random() * (BAL.driftMax - BAL.driftMin);
-    qDrift.setFromAxisAngle(driftAxis, step);
-    return bearing.clone().applyQuaternion(qDrift).normalize();
-  }
-
   //  The wave's manifest - how many of what - is rolled here, when the
   //  previous wave ends, so the summary card can print exactly what is
   //  coming rather than an estimate. startWave consumes the same list.
@@ -2689,35 +2669,30 @@
     // you the real thing rather than a placeholder
     const w = G.wave + 1;
     G.nextComp = rollComposition(w);
-    G.zoneAng = zoneAngleFor(w);
     G.shipDist = shipDistFor(w);
     const want = shipCountFor(w);
-    const sep = Math.min(2.2, Math.max(BAL.shipSepMin, G.zoneAng * 1.15));
+
+    // A mothership's spot is claimed ONCE, when it warps in, and kept for
+    // the rest of the run. Only the zone changes: it opens at a couple of
+    // hex rings' reach and widens every wave the ship has been aboard,
+    // always centred on the bearing it locked on arrival. The pressure a
+    // ship applies is a place that deepens, not a front that wanders.
+    const startAng = (BAL.zoneRings * 2 + 1) * tiles.meanInr;
+    for (const s of G.ships) {
+      s.ang = Math.min(BAL.zoneMax, s.ang0 + (w - s.born) * BAL.zoneGrow);
+    }
 
     // during the dry window a candidate must clear the water bar as well as
     // its neighbours; the best dry option wins, and if nothing is dry we fall
     // back to the roomiest rather than refusing to place the ship
     const dry = w <= BAL.dryWaves;
-    const passes = v => !dry || waterFrac(v, G.zoneAng) <= BAL.dryMax;
+    const passes = v => !dry || waterFrac(v, startAng) <= BAL.dryMax;
 
-    // existing ships walk, but each picks the drift that keeps it clearest
-    // of its neighbours, so they spread instead of converging
-    for (let i = 0; i < G.ships.length; i++) {
-      const s = G.ships[i];
-      let best = null, bestD = -1, dryBest = null, dryBestD = -1;
-      for (let t = 0; t < (dry ? 24 : 8); t++) {
-        const cand = driftFrom(s.bearing);
-        const d = clearance(cand, G.ships, i);
-        if (d > bestD) { bestD = d; best = cand; }
-        if (passes(cand)) {
-          if (d > dryBestD) { dryBestD = d; dryBest = cand; }
-          if (d >= sep) break;
-        }
-      }
-      s.bearing.copy(dryBest || best);
-    }
-
-    // new arrivals warp in as far from everything as a short search can find
+    // a new arrival picks its own spot: far enough out that its opening
+    // zone clears every established zone, as best a short search can find
+    let sep = BAL.shipSepMin;
+    for (const s of G.ships) sep = Math.max(sep, s.ang + startAng);
+    sep = Math.min(2.2, sep);
     while (G.ships.length < want) {
       let best = null, bestD = -1, dryBest = null, dryBestD = -1;
       for (let t = 0; t < (dry ? 96 : 64); t++) {
@@ -2729,14 +2704,14 @@
           if (d >= sep) break;
         }
       }
-      G.ships.push({ bearing: dryBest || best, dist: G.shipDist, ang: G.zoneAng });
+      G.ships.push({ bearing: dryBest || best, dist: G.shipDist,
+                     ang: startAng, ang0: startAng, born: w });
     }
     G.ships.length = Math.min(G.ships.length, want);
 
     for (let i = 0; i < G.ships.length; i++) {
       G.ships[i].dist = G.shipDist;
-      G.ships[i].ang = G.zoneAng;
-      drawZone(i, G.ships[i].bearing, G.zoneAng);
+      drawZone(i, G.ships[i].bearing, G.ships[i].ang);
     }
     for (let i = G.ships.length; i < MAX_SHIPS; i++) {
       zoneRings[i].visible = false;
