@@ -1050,7 +1050,9 @@
     cannonRange: 1,                         // extra rings over a land turret
     cannonCeiling: 0.35,
     cannonRate: 0.85, cannonDmg: 20,        // slower, heavier
-    alienN:     w => 10 + w * 6,
+    // the first five waves run at half strength, so the opening is about
+    // learning the ground rather than surviving the full flood
+    alienN:     w => w <= 5 ? (10 + w * 6) / 2 : 10 + w * 6,
     rampWaves:  22,                         // waves to reach the widest launch
     zoneMin:    0.38,                       // launch cone half-angle, radians
     zoneMax:    1.45,                       // ~83 degrees, most of a hemisphere
