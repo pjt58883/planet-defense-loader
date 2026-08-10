@@ -2018,7 +2018,7 @@
   //  real hulk or dart GLB lands in public/assets, measure it and update
   //  its entry here.
   // dart = viper model's length; dread = its placeholder slab until a GLB lands
-  const ENEMY_LEN = { viper: 1.898, hulk: 1.898, dart: 1.884, dread: 1.884 };
+  const ENEMY_LEN = { viper: 1.898, hulk: 1.898, dart: 1.884, dread: 1.900 };
   const VIPER_LEN = 1.884;           // placeholder cones are built to this
 
   // one instanced mesh per enemy type, all drawn from the same alien list
@@ -2083,6 +2083,12 @@
     outlineMeshes[t] = m;
   }
 
+  //  The dreadnaught's cannon: its own instanced mesh (plus hostile outline)
+  //  slung under each hull, slewed onto whatever that ship is shelling.
+  let dreadGunMesh = null, dreadGunOutline = null;
+  const DREAD_GUN_DROP = 0.42;      // how far under the hull centre it hangs, in model units
+  const DREAD_GUN_K = 0.55;         // cannon scale relative to the hull
+
   //  Energy shields: one faint red shell per shielded enemy, drawn until
   //  the hull under it has lost the roster's shield fraction of its health.
   const SHIELD_R = 1.2;                // shell radius, in enemy scale units
@@ -2103,6 +2109,8 @@
       enemyMeshes[t].count = 0;
       outlineMeshes[t].count = 0;
     }
+    if (dreadGunMesh) dreadGunMesh.count = 0;
+    if (dreadGunOutline) dreadGunOutline.count = 0;
     shieldMesh.count = 0;
   }
   const dummy = new THREE.Object3D();
@@ -2948,6 +2956,7 @@
       // the emplacement it is pounding can always answer back.
       if (a.type === 'dread' && a.alt - a.speed * dt <= BAL.dreadOrbit) {
         a.alt = BAL.dreadOrbit;
+        a.aim = a.aim || null;
         let prey = null, near = Infinity;
         for (const t of towers) {
           if (t.hp - t.incoming <= 0) continue;      // already falling
@@ -2955,6 +2964,8 @@
           if (d < near) { near = d; prey = t; }
         }
         if (prey) {
+          // the cannon tracks its prey continuously, not just when it fires
+          (a.aim || (a.aim = new THREE.Vector3())).copy(prey.seat);
           const over = nearestCell(a.dir);
           if (over !== a.ci || !a.reach) { a.ci = over; a.reach = ringSet(over, BAL.range); }
           if (a.reach.has(prey.ci)) {
@@ -3076,7 +3087,7 @@
     }
 
     // compact and draw, each type into its own mesh
-    let live = 0, shields = 0;
+    let live = 0, shields = 0, guns = 0;
     const drawn = { viper: 0, hulk: 0, dart: 0, dread: 0 };
     for (let i = 0; i < aliens.length; i++) {
       const a = aliens[i];
@@ -3113,6 +3124,32 @@
       dummy.updateMatrix();
       outlineMeshes[a.type].setMatrixAt(drawn[a.type]++, dummy.matrix);
 
+      // the cannon under a dreadnaught: hung below the hull and swung onto
+      // whatever it is shelling, falling back to straight down when idle
+      if (a.type === 'dread' && dreadGunMesh) {
+        gPos.copy(alienPos).addScaledVector(a.dir, -DREAD_GUN_DROP * vk);
+        if (a.aim) gDir.subVectors(a.aim, gPos);
+        else gDir.copy(a.dir).multiplyScalar(-1);
+        if (gDir.lengthSq() < 1e-12) gDir.copy(a.dir).multiplyScalar(-1);
+        gDir.normalize();
+        gUp.copy(a.dir).addScaledVector(gDir, -a.dir.dot(gDir));
+        if (gUp.lengthSq() < 1e-12) gUp.copy(fY);
+        gUp.normalize();
+        gZ.copy(gDir).multiplyScalar(-1);                 // barrel baked onto -Z
+        gX.crossVectors(gUp, gZ).normalize();
+        gBasis.makeBasis(gX, gUp, gZ);
+        dummy.position.copy(gPos);
+        dummy.quaternion.setFromRotationMatrix(gBasis);
+        dummy.scale.setScalar(vk * DREAD_GUN_K);
+        dummy.updateMatrix();
+        dreadGunMesh.setMatrixAt(guns, dummy.matrix);
+        dummy.scale.setScalar(vk * DREAD_GUN_K * OUTLINE_SCALE);
+        dummy.updateMatrix();
+        dreadGunOutline.setMatrixAt(guns++, dummy.matrix);
+        dummy.position.copy(alienPos);
+        dummy.scale.setScalar(vk);
+      }
+
       // the shell rides the hull until half its health is gone
       const sh = BAL.enemies[a.type].shield;
       if (sh && a.hp > a.hp0 * sh) {
@@ -3129,6 +3166,12 @@
       enemyMeshes[t].instanceMatrix.needsUpdate = true;
       outlineMeshes[t].count = drawn[t];
       outlineMeshes[t].instanceMatrix.needsUpdate = true;
+    }
+    if (dreadGunMesh) {
+      dreadGunMesh.count = guns;
+      dreadGunMesh.instanceMatrix.needsUpdate = true;
+      dreadGunOutline.count = guns;
+      dreadGunOutline.instanceMatrix.needsUpdate = true;
     }
     shieldMesh.count = shields;
     shieldMesh.instanceMatrix.needsUpdate = true;
@@ -3475,9 +3518,10 @@
     // the dart flies the retired viper model; a dedicated dart.glb in
     // public/assets would take over automatically
     dart:    ['/assets/dart.glb', '/assets/viper.glb'],
-    // the dreadnaught's mesh is still inbound; until dread.glb lands in
-    // public/assets it flies the placeholder slab below
-    dread:   ['/assets/dread.glb'],
+    // the dreadnaught: hull and the bombardment cannon slung under it. The
+    // cannon is a separate part so it can slew onto its target in flight.
+    dread:    ['/assets/dread.glb'],
+    dreadgun: ['/assets/dread_cannon.glb'],
     battery: ['/assets/battery.glb'],
     // the recovery team: engineers and their outpost, planted on lost ground
     recovery: ['/assets/recovery.glb'],
@@ -3491,7 +3535,7 @@
   //  Slots with no shipped GLB yet render as placeholders by design, so a
   //  missing file is expected and not worth an on-screen warning. New units
   //  sit here until their GLB lands in public/assets.
-  const OPTIONAL_MODELS = new Set(['dread']);
+  const OPTIONAL_MODELS = new Set();
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
@@ -3533,6 +3577,10 @@
         color = 0x58c8ff; break;
       case 'dread':                                     // a broad gun deck, long axis on Z
         geo = new THREE.BoxGeometry(VIPER_LEN * 0.55, VIPER_LEN * 0.18, VIPER_LEN);
+        color = 0x8a2c50; break;
+      case 'dreadgun':                                  // stub barrel, aimed along +X like the GLB
+        geo = new THREE.CylinderGeometry(VIPER_LEN * 0.07, VIPER_LEN * 0.07, VIPER_LEN * 0.5, 8);
+        geo.rotateZ(-Math.PI / 2);
         color = 0x8a2c50; break;
       case 'battery':
         geo = new THREE.CylinderGeometry(BATTERY_R * 0.55, BATTERY_R, BATTERY_H, 6);
@@ -3598,6 +3646,20 @@
     coreOutline = makeAllyOutline(parts.core.geo, MAX_TURRETS);
     batteryOutline = makeAllyOutline(parts.battery.geo, MAX_TURRETS);
     recoveryOutline = makeAllyOutline(parts.recovery.geo, MAX_TURRETS);
+
+    // the dreadnaught's cannon is modelled with its barrel down +X; lay it
+    // onto -Z once so the draw loop can just point it at the target, and
+    // recentre it on its breech so it swings about the mount, not the muzzle
+    parts.dreadgun.geo.rotateY(Math.PI / 2);
+    parts.dreadgun.geo.computeBoundingBox();
+    const dgb = parts.dreadgun.geo.boundingBox;
+    if (dgb) parts.dreadgun.geo.translate(0, -(dgb.min.y + dgb.max.y) / 2, -dgb.max.z);
+    dreadGunMesh = instanced(parts.dreadgun, MAX_ALIENS, true);
+    dreadGunOutline = new THREE.InstancedMesh(parts.dreadgun.geo, outlineMat, MAX_ALIENS);
+    dreadGunOutline.count = 0;
+    dreadGunOutline.frustumCulled = false;
+    dreadGunOutline.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    world.add(dreadGunOutline);
 
     // both projectiles are authored nose-up (+Y); lay them onto -Z once so
     // updateBullets can just point the instance down its velocity
