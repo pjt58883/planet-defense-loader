@@ -3787,6 +3787,9 @@
       parts.jetpad.geo.translate(0, -jpb.min.y, 0);
       JETPAD_H = jpb.max.y - jpb.min.y;
     }
+    // the interceptor is modelled nose-on -X; lay it onto -Z like everything
+    // else that flies, then measure its belly for the resting altitude
+    parts.jet.geo.rotateY(-Math.PI / 2);
     parts.jet.geo.computeBoundingBox();
     if (parts.jet.geo.boundingBox) JET_BELLY = -parts.jet.geo.boundingBox.min.y;
     jetpadMesh = instanced(parts.jetpad, MAX_TURRETS, true);
