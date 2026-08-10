@@ -1105,6 +1105,11 @@
     dreadOrbit: 0.88,                       // holding altitude, under every gun ceiling
     dreadDrift: 0.10,                       // radians/s it repositions over the surface
     dreadRate:  2.4, dreadDmg: 18,          // its bombardment gun
+    // the cannon's ball is bolted flat to the hull, so the barrel only
+    // trims a few degrees off vertical - the SHIP flies the firing
+    // solution, and keeps creeping until its prey is nearly beneath it
+    dreadTilt:  0.30,                       // max barrel tilt off vertical, radians
+    dreadTrim:  0.10,                       // keeps repositioning above this aim error
     towerHp:    50,                         // what one emplacement soaks before falling
     jetHp:     60,                          // a fighter's hull
     breakTime:  20,
@@ -2971,18 +2976,23 @@
           (a.aim || (a.aim = new THREE.Vector3())).copy(prey.seat);
           const over = nearestCell(a.dir);
           if (over !== a.ci || !a.reach) { a.ci = over; a.reach = ringSet(over, BAL.range); }
-          if (a.reach.has(prey.ci)) {
-            // on target: hold station and fire on the cooldown
+          // The ball mount is bolted flat to the hull, so the barrel can
+          // only trim BAL.dreadTilt off vertical. The needed tilt is the
+          // real fire gate, and the ship closes the rest itself.
+          fA2.copy(a.dir).multiplyScalar(RADIUS + a.alt);
+          fA1.copy(prey.seat).sub(fA2).normalize();
+          const tilt = Math.acos(THREE.MathUtils.clamp(-fA1.dot(a.dir), -1, 1));
+          if (a.reach.has(prey.ci) && tilt <= BAL.dreadTilt) {
             a.cool = (a.cool || 0) - dt;
             if (a.cool <= 0) {
               a.cool = BAL.dreadRate;
-              fA2.copy(a.dir).multiplyScalar(RADIUS + a.alt);
-              fA1.copy(prey.seat).sub(fA2).normalize();
               fireShell(fA2, fA1, prey, BAL.dreadDmg);
               muzzleFlash(fA2);
             }
-          } else if (near > 1e-5) {
-            // out of reach: drift over the surface toward the target
+          }
+          if (tilt > BAL.dreadTrim && near > 1e-5) {
+            // still off the vertical: keep creeping toward overhead, and
+            // keep shooting on the way in once the barrel can bear
             fAxis.crossVectors(a.dir, prey.up);
             if (fAxis.lengthSq() > 1e-12) {
               fAxis.normalize();
@@ -3152,6 +3162,16 @@
         else gDir.copy(a.dir).multiplyScalar(-1);
         if (gDir.lengthSq() < 1e-12) gDir.copy(a.dir).multiplyScalar(-1);
         gDir.normalize();
+        // the flat of the ball stays against the flat of the hull: the
+        // barrel is clamped to slight angles about straight down, and the
+        // ship's own station-keeping lines up anything past that
+        gUp.copy(a.dir).multiplyScalar(-1);
+        if (gUp.angleTo(gDir) > BAL.dreadTilt) {
+          gX.crossVectors(gUp, gDir);
+          if (gX.lengthSq() > 1e-12) {
+            gDir.copy(gUp).applyAxisAngle(gX.normalize(), BAL.dreadTilt);
+          } else gDir.copy(gUp);
+        }
         gUp.copy(a.dir).addScaledVector(gDir, -a.dir.dot(gDir));
         if (gUp.lengthSq() < 1e-12) gUp.copy(fY);
         gUp.normalize();
