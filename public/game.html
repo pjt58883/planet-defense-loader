@@ -259,11 +259,16 @@
     flex-wrap:wrap;
   }
 
-  /* the shop: image buttons stacked down the right edge, cost beside art */
+  /* the shop: image buttons stacked down the right edge, cost beside art,
+     the gold readout sitting right on top of where it gets spent */
   .buildbar{
     right:20px;top:50%;transform:translateY(-50%);
     display:flex;flex-direction:column;gap:9px;
     pointer-events:auto;
+  }
+  .buildbar .gold{
+    text-align:center;font-size:19px;letter-spacing:.10em;
+    font-variant-numeric:tabular-nums;margin-bottom:2px;
   }
   .buy{
     display:flex;align-items:center;gap:10px;
@@ -355,6 +360,7 @@
     .sizes button{padding:8px 4px}
     .hplabel{font-size:20px;letter-spacing:.14em}
     .buildbar{right:10px;gap:6px}
+    .buildbar .gold{font-size:15px}
     .buy img{width:36px;height:36px}
     .nextwave{font-size:17px;padding:11px 20px}
     .hud.bc{bottom:16px}
@@ -394,6 +400,8 @@
 
 <!-- the shop: one image button per buildable, cost beside the picture -->
 <div class="hud buildbar">
+  <!-- the wallet lives over the shop: what you can afford, where you spend it -->
+  <div class="stat gold">gold<b id="goldVal">25</b></div>
   <button id="buildBtn" class="buy" title="Railgun turret"><img id="img-turret" alt="Railgun turret"><span class="cost">5</span></button>
   <button id="jetBtn" class="buy" title="Fighter"><img id="img-jet" alt="Fighter"><span class="cost">10</span></button>
   <button id="cannonBtn" class="buy" title="Sea cannon"><img id="img-cannon" alt="Sea cannon"><span class="cost">12</span></button>
@@ -457,7 +465,6 @@
     <div class="hpfill" id="hpFill" style="width:100%"></div>
   </div>
   <div class="stats">
-    <span class="stat">gold<b id="goldVal">25</b></span>
     <span class="stat">wave<b id="waveVal">0</b></span>
     <span class="stat">next<b id="nextVal">20s</b></span>
   </div>
