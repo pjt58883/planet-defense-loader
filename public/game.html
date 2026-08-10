@@ -1439,6 +1439,9 @@
         fX = new THREE.Vector3(), fY = new THREE.Vector3(), fZ = new THREE.Vector3(),
         fBasis = new THREE.Matrix4(), fRoll = new THREE.Quaternion(),
         fLead = new THREE.Quaternion(), fPitch = new THREE.Quaternion();
+  // scratch for the dreadnaught's slung cannon
+  const gPos = new THREE.Vector3(), gDir = new THREE.Vector3(), gUp = new THREE.Vector3(),
+        gX = new THREE.Vector3(), gZ = new THREE.Vector3(), gBasis = new THREE.Matrix4();
 
   function placeFighter(ci) {
     if (fighters.length >= MAX_TURRETS) return null;
