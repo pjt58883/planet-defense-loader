@@ -1169,12 +1169,16 @@
     jetSpeed:   1.20,                       // radians of arc per second
     jetTurn:    2.2,                        // radians per second of heading change
     jetClimb:   1.00,
-    jetCruise:  0.16,                       // idle altitude
-    jetFloor:   0.06,                       // never dives below this
-    jetCeiling: 1.05,
+    // The fighter is the LAST LINE. It flies low - its whole war happens
+    // under the top of a railgun's mast - and only engages ships that have
+    // slipped past the guns and are moments from the ground. In exchange
+    // its guns hit twice as hard as they used to.
+    jetCeilTop: 0.95,                       // ceiling, as a fraction of the mast top
+    jetCruise:  0.65,                       // idle altitude, fraction of that ceiling
+    jetFloor:   0.30,                       // never dives below this fraction of it
     jetReach:   4.0,                        // firing range, in tile inradii
     jetRate:    0.28,
-    jetDmg:     15,
+    jetDmg:     30,
     jetSize:    1.5,                        // length, in tile inradii
     shellSpeed: 1.15,                       // missile flight speed; it homes
     slugSpeed:  2.3,                        // railgun slug: straight-line, no homing
@@ -1491,12 +1495,11 @@
   // =====================================================================
   //  FIGHTERS
   //
-  //  A turret is a gun bolted to one tile: it reaches everything in its
-  //  ring but only from where it stands. A fighter owns the SAME circle
-  //  and can be anywhere inside it, so it never has a bad angle, but it
-  //  can only be in one place at a time and has to fly there first. That
-  //  trade is the whole point of the unit: turrets buy coverage, fighters
-  //  buy reach, and neither one substitutes for the other.
+  //  The LAST LINE. Turrets own the sky; the fighter owns the final
+  //  metres under it. It patrols its circle below the top of a railgun's
+  //  mast and can only engage there - so its whole war is the ship that
+  //  slipped through the flak and is moments from the ground, and its
+  //  guns hit hard enough to matter in exactly that window.
   // =====================================================================
   const fighters = [];
   const fighterAt = new Map();
@@ -1545,18 +1548,24 @@
                      .addScaledVector(e1, Math.sin(radius * 0.7)).normalize();
     const head = new THREE.Vector3().crossVectors(home, start).normalize();
 
+    // the last line flies under the top of a railgun's mast: everything
+    // about its altitude band is measured from that mast, this world's size
+    const mast = (GUN_SEAT + GUN_TIP) / PAD_R * tiles.meanInr;
+    const ceiling = mast * BAL.jetCeilTop;
     const jf = {
       ci, home, cover, radius, e1, e2,
       dir: start, head,
-      alt: BAL.jetCruise,
+      ceiling,
+      cruise: ceiling * BAL.jetCruise,
+      floor: ceiling * BAL.jetFloor,
+      alt: ceiling * BAL.jetCruise,
       k: tiles.meanInr * BAL.jetSize / JET_LEN,
-      ceiling: BAL.jetCeiling,
       dmg: BAL.jetDmg, level: 1,
       hp: BAL.jetHp, incoming: 0, alive: true, pay: 0,   // darts hunt it
       cool: 0, bank: 0,
       // where it drew last frame and the smoothed true flight direction,
       // which is what the nose actually follows
-      prevPos: start.clone().multiplyScalar(RADIUS + BAL.jetCruise),
+      prevPos: start.clone().multiplyScalar(RADIUS + ceiling * BAL.jetCruise),
       vel: head.clone(),
       emit: Math.random() * 0.03, phase: Math.random() * Math.PI * 2
     };
@@ -1788,25 +1797,41 @@
       let wantAlt;
       if (best) {
         fWant.copy(best.dir);
-        wantAlt = Math.max(best.alt, BAL.jetFloor);
+        wantAlt = Math.max(best.alt, f.floor);
       } else if (!G.inWave) {
         // stand-down but still far out: make straight for the pad, low
         fWant.copy(f.home);
-        wantAlt = Math.max(BAL.jetCruise * 0.5, restAlt(f));
+        wantAlt = Math.max(f.cruise * 0.5, restAlt(f));
       } else {
-        // idle: circle the home tile so the unit reads as patrolling
-        f.phase += dt * BAL.jetSpeed / Math.max(f.radius * 0.7, 1e-3);
-        const rr = f.radius * 0.7;
-        fWant.copy(f.home).multiplyScalar(Math.cos(rr))
-             .addScaledVector(f.e1, Math.sin(rr) * Math.cos(f.phase))
-             .addScaledVector(f.e2, Math.sin(rr) * Math.sin(f.phase)).normalize();
-        wantAlt = BAL.jetCruise;
+        // Nothing in the window yet. A last line does not idle in the
+        // wrong place: if a visible ship is descending toward a tile in
+        // this circle, loiter over that tile so the guns are already
+        // overhead when it drops through the mast line.
+        let threat = null, tAlt = Infinity;
+        for (const a of aliens) {
+          if (!a.alive || a.type === 'dread') continue;
+          if (a.cloak && !a.seen) continue;          // the veil hides intent too
+          if (!f.cover.has(a.ci)) continue;
+          if (a.alt < tAlt) { tAlt = a.alt; threat = a; }
+        }
+        if (threat) {
+          fWant.copy(tiles.cells[threat.ci].center);
+          wantAlt = f.cruise;
+        } else {
+          // idle: circle the home tile so the unit reads as patrolling
+          f.phase += dt * BAL.jetSpeed / Math.max(f.radius * 0.7, 1e-3);
+          const rr = f.radius * 0.7;
+          fWant.copy(f.home).multiplyScalar(Math.cos(rr))
+               .addScaledVector(f.e1, Math.sin(rr) * Math.cos(f.phase))
+               .addScaledVector(f.e2, Math.sin(rr) * Math.sin(f.phase)).normalize();
+          wantAlt = f.cruise;
+        }
       }
 
       // steer: turn the heading toward the bearing of the wanted point,
       // capped by a turn rate so it banks around instead of snapping
       fA1.copy(fWant).addScaledVector(f.dir, -fWant.dot(f.dir));
-      let turn = 0;
+      let turn = 0, off = 0;
       if (fA1.lengthSq() > 1e-10) {
         fA1.normalize();
         const ang = f.head.angleTo(fA1);
@@ -1820,15 +1845,21 @@
           f.head.addScaledVector(f.dir, -f.head.dot(f.dir)).normalize();
           turn *= sign;
         }
+        off = f.head.angleTo(fA1);       // how far the nose still is off-goal
       }
       f.bank += (THREE.MathUtils.clamp(turn / Math.max(dt, 1e-4) * 0.30, -1.0, 1.0) - f.bank)
                 * Math.min(1, dt * 4);
 
-      // fly forward along the great circle the heading points down
+      // Fly forward along the great circle the heading points down. The
+      // throttle follows the alignment: a jet still turning onto its goal
+      // brakes hard, which shrinks its turning circle below its own gun
+      // reach - without this, a point inside the full-speed turn radius
+      // can be orbited forever and never closed on.
+      const fSpd = BAL.jetSpeed * (0.35 + 0.65 * Math.max(0, Math.cos(off)));
       fAxis.crossVectors(f.dir, f.head);
       if (fAxis.lengthSq() > 1e-12) {
         fAxis.normalize();
-        fQ.setFromAxisAngle(fAxis, BAL.jetSpeed * dt);
+        fQ.setFromAxisAngle(fAxis, fSpd * dt);
         f.dir.applyQuaternion(fQ).normalize();
         f.head.applyQuaternion(fQ).normalize();
       }
@@ -4313,7 +4344,7 @@
     ['turret', 'Railgun Turret', BAL.turretCost,
      'The line gun. Leads its shots and slews fast; mountains stretch its reach and ceiling.'],
     ['jet', 'Fighter', BAL.jetCost,
-     'Patrols a circle around its base hex and dives on anything inside it. Its landing pad claims the hex it flies from. Darts hunt it.'],
+     'The last line. Patrols low - under the top of a railgun’s mast - and dives hard on anything that slips past the guns and closes on the ground, hitting far harder than a slug. Its landing pad claims the hex it flies from. Darts hunt it.'],
     ['cannon', 'Sea Cannon', BAL.cannonCost,
      'The water build: a floating railgun with longer reach, a heavier slug and a higher ceiling than a land turret. Unlocks when a drop zone first covers water.'],
     ['battery', 'Missile Battery', BAL.batteryCost,
