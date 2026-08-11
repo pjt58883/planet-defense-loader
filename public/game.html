@@ -228,6 +228,24 @@
     animation:hpPulse .8s ease-in-out infinite;
   }
   @keyframes hpPulse{ 50%{ filter:brightness(1.55) } }
+  /* the landing alarm: BREACH! strobes across the bar that just paid for it */
+  .breach{
+    position:absolute;inset:0;z-index:1;
+    display:flex;align-items:center;justify-content:center;
+    font-size:21px;letter-spacing:.34em;text-indent:.34em;
+    color:#fff;text-shadow:0 0 10px #ff2f2f,0 1px 2px #000;
+    opacity:0;pointer-events:none;
+  }
+  .breach.on{animation:breach 1.2s linear}
+  @keyframes breach{
+    0%,22%,44%{opacity:1}
+    12%,34%,100%{opacity:0}
+    66%{opacity:1}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .breach.on{animation:breachHold 1.2s linear}
+    @keyframes breachHold{ 0%,80%{opacity:1} 100%{opacity:0} }
+  }
   .hplabel{
     font-size:22px;
     letter-spacing:.20em;color:var(--ink);
@@ -473,6 +491,7 @@
   <div class="hplabel" id="hpVal">planet defense 100</div>
   <div class="hpbar">
     <div class="hpfill" id="hpFill" style="width:100%"></div>
+    <div class="breach" id="breachFlash">Breach!</div>
   </div>
   <div class="stats">
     <span class="stat">wave<b id="waveVal">0</b></span>
@@ -1063,7 +1082,7 @@
   // else, so it can be swept from a test harness instead of guessed at.
   const BAL = {
     turretCost: 5,
-    range: 2, ceiling: 0.95, rate: 0.60, dmg: 11,
+    range: 4, ceiling: 0.95, rate: 0.60, dmg: 11,
     rockRange: 1, rockCeiling: 0.25,          // what a mountain tile adds
     cannonCost: 12,
     cannonRange: 1,                         // extra rings over a land turret
@@ -1153,11 +1172,13 @@
     jetCeiling: 1.05,
     jetReach:   4.0,                        // firing range, in tile inradii
     jetRate:    0.28,
-    jetDmg:     12,
+    jetDmg:     15,
     jetSize:    1.5,                        // length, in tile inradii
     shellSpeed: 1.15,                       // missile flight speed; it homes
     slugSpeed:  2.3,                        // railgun slug: straight-line, no homing
-    slugRange:  1.3,                        // sphere radii a slug flies before detonating
+    slugRange:  1.6,                        // sphere radii a slug flies before detonating;
+                                            // long enough for the doubled ring reach
+                                            // at full ceiling on the smallest worlds
     trailGap:   0.012,                      // distance between smoke puffs
     strayLife:  2.0,                        // seconds a shell with no target keeps going
     batteryCost: 18,
@@ -1172,7 +1193,7 @@
     // empty tubes come back one by one - slower per tube than the old
     // single launcher, ferocious in a full salvo.
     batteryTubes: 5,
-    batterySalvo: 0.18,                     // seconds between launches in a ripple
+    batterySalvo: 0.5,                      // seconds between launches in a ripple
     batteryRate: 3.0, batteryDmg: 30,       // per-tube reload; the payload is unchanged
     // ---- cloaking, and the eye that answers it. From cloakFrom on, every
     //      ship the motherships launch is cloaked: the model is hidden and
@@ -3237,6 +3258,7 @@
         a.alive = false;
         G.landed++;
         G.hp -= a.dmg;
+        breachFlash();
         const lost = demolish(a.ci);
         killHex(a.ci);
         say(lost || 'HEX DESTROYED');
@@ -3513,6 +3535,15 @@
     const b = document.getElementById(id);
     b.querySelector('.cost').textContent = cost;
     b.title += ' (' + cost + ' gold)';
+  }
+
+  // a landing strobes BREACH! across the bar that just paid for it; the
+  // reflow restart lets back-to-back landings each get their own flash
+  const breachEl = document.getElementById('breachFlash');
+  function breachFlash() {
+    breachEl.classList.remove('on');
+    void breachEl.offsetWidth;
+    breachEl.classList.add('on');
   }
 
   // every purchase and upgrade goes through here, so the loss card can
@@ -4141,6 +4172,7 @@
     for (const k in RIGS) {
       const g = new THREE.Group();
       for (const m of RIGS[k]()) g.add(m);
+      g.rotation.y = Math.PI;        // face the other way in the portrait
       sc.add(g);
       box.setFromObject(g).getBoundingSphere(sph);
       const d = sph.radius * 2.7;
