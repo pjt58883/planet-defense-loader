@@ -3202,8 +3202,12 @@
     }
 
     if (!G.inWave) {
-      G.breakLeft -= dt;
-      if (G.breakLeft <= 0) startWave();
+      // the break belongs to the player: the wave comes when they call it.
+      // Only auto-continue keeps the old clock running.
+      if (autoContinue) {
+        G.breakLeft -= dt;
+        if (G.breakLeft <= 0) startWave();
+      }
     } else if (G.queue.length) {
       G.spawnTimer -= dt;
       while (G.queue.length && G.spawnTimer <= 0) {
@@ -3658,8 +3662,11 @@
     // the epsilon stops it sitting on the full break time for an extra second:
     // at breakLeft 19.9999, a plain ceil still reads 20
     const left = Math.max(0, Math.ceil(G.breakLeft - 1e-6));
-    nextVal.textContent = G.over ? '\u2014' : G.inWave ? 'inbound' : left + 's';
-    nextStat.classList.toggle('soon', !G.over && !G.inWave && left <= 5);
+    // manual play holds the break open until Next Wave is pressed; the
+    // countdown only exists when auto-continue is running the show
+    nextVal.textContent = G.over ? '\u2014' : G.inWave ? 'inbound'
+      : autoContinue ? left + 's' : 'ready';
+    nextStat.classList.toggle('soon', !G.over && !G.inWave && autoContinue && left <= 5);
     waveBtn.disabled = G.inWave || G.over;
     cannonBtn.disabled = G.gold < BAL.cannonCost && G.build !== 'cannon';
     cannonBtn.setAttribute('aria-pressed', G.build === 'cannon' ? 'true' : 'false');
@@ -3703,7 +3710,9 @@
   batteryBtn.addEventListener('click', () => setBuild(G.build === 'battery' ? null : 'battery'));
   recoveryBtn.addEventListener('click', () => setBuild(G.build === 'recovery' ? null : 'recovery'));
   satBtn.addEventListener('click', () => setBuild(G.build === 'sat' ? null : 'sat'));
-  waveBtn.addEventListener('click', () => { if (!G.inWave && !G.over) { G.breakLeft = 0; } });
+  waveBtn.addEventListener('click', () => {
+    if (!G.inWave && !G.over && G.started && G.ready) startWave();
+  });
 
   // ---------- wave summary ----------
   const waveModal = document.getElementById('waveModal');
