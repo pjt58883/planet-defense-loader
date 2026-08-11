@@ -1207,7 +1207,8 @@
     cloakFrom: 15,
     satCost:   8,
     satRange:  3,                           // rings of sky one satellite uncloaks
-    satAlt:    1.55,                        // stationary orbit, above every ceiling
+    satAlt:    1.55,                        // stationary orbit, above every gun ceiling
+    satHp:     30,                          // but not above a dart's: it dies in five hits
     gunTurn:    4.2,                        // radians/s a railgun mount slews
     batteryTurn: 1.8,                       // the launcher swings heavier
     aimSettle:  0.05,                       // radians off-solution a mount may fire at
@@ -1617,6 +1618,10 @@
     for (const c of cover) radius = Math.max(radius, home.angleTo(tiles.cells[c].center));
     const s = { ci, home, radius, level: 1,
                 k: tiles.meanInr * 0.9 / SAT_LEN,
+                // the alien-target interface, so a dart's shells can chew
+                // it: dir/alt place it in space, pay 0 earns them nothing
+                dir: home, alt: BAL.satAlt,
+                hp: BAL.satHp, incoming: 0, alive: true, pay: 0,
                 spin: Math.random() * Math.PI * 2 };
     // the ground station that marks the claimed hex, flat on the tile
     mPos.copy(home).multiplyScalar(RADIUS - f.fit * 0.04);
@@ -1644,6 +1649,13 @@
   }
 
   function updateSats(dt) {
+    // bring out the dead first, so darts never shell a ghost
+    for (let i = satellites.length - 1; i >= 0; i--) {
+      if (satellites[i].alive) continue;
+      satAt.delete(satellites[i].ci);
+      satellites.splice(i, 1);
+      say('SATELLITE DOWN');
+    }
     if (satMesh) {
       for (let i = 0; i < satellites.length; i++) {
         const s = satellites[i];
@@ -3219,12 +3231,20 @@
       // matches its altitude, and shoots. Fighters elsewhere on the planet
       // are none of its business; over a clear zone it goes in to land.
       a.hunting = null;
-      if (a.type === 'dart' && fighters.length) {
+      if (a.type === 'dart' && (fighters.length || satellites.length)) {
         let tgt = null, near = Infinity;
         for (const jf of fighters) {
           if (jf.dir.angleTo(a.ship.bearing) > a.ship.ang) continue;
           const d = a.dir.angleTo(jf.dir);
           if (d < near) { near = d; tgt = jf; }
+        }
+        // recon satellites are prey of the same rank: the dart guns for
+        // whatever eye or escort is nearest inside its own zone
+        for (const s of satellites) {
+          if (s.hp - s.incoming <= 0) continue;
+          if (s.home.angleTo(a.ship.bearing) > a.ship.ang) continue;
+          const d = a.dir.angleTo(s.home);
+          if (d < near) { near = d; tgt = s; }
         }
         a.hunting = tgt;
         if (tgt) {
@@ -3709,7 +3729,7 @@
   //  Shown on the card before a type's first wave, so its debut is a
   //  briefing rather than a surprise.
   const ENEMY_INTRO = {
-    dart: 'Darts are fast enemy fighters that hunt down your fighters before landing.',
+    dart: 'Darts are fast enemy fighters that hunt down your fighters and recon satellites before landing.',
     hulk: 'Hulks are armoured transports behind energy shields. The shield falls at half health, and a landed hulk hits the ground twice as hard.',
     dread: 'Dreadnaughts are orbital bombardment ships. One stops at railgun height and shells your buildings with a railgun’s own reach — its wave does not end until it is shot down.',
     cloak: 'The motherships now cloak every ship they launch: hulls vanish, and your units will not fire at what they cannot see — only the red outlines betray the approach. Park recon satellites in orbit to reveal everything beneath them.'
@@ -4299,12 +4319,12 @@
     ['recovery', 'Recovery Team', BAL.recoveryCost,
      'The only thing that builds on dead ground. Digs a crossed-out tile back out, one wave of work per wave it has been lost, and defends itself with sidearms. Unlocks the first time a hex is lost.'],
     ['sat', 'Recon Satellite', BAL.satCost,
-     'Parks in stationary orbit over its hex, above every gun’s reach, and reveals cloaked ships in the rings beneath so your units can target them. No weapons of its own. Unlocks when the enemy starts cloaking.'],
+     'Parks in stationary orbit over its hex, above every gun’s reach, and reveals cloaked ships in the rings beneath so your units can target them. No weapons of its own, and darts hunt it. Unlocks when the enemy starts cloaking.'],
     ['side', 'The enemy'],
     ['dropship', 'Dropship', null,
      'The line trooper. Falls from its mothership toward a telegraphed tile; anything that lands kills the hex under it.'],
     ['dart', 'Dart', null,
-     'Fast interceptor. Hunts your fighters inside its own landing zone before landing; only a clear sky sends it groundward.'],
+     'Fast interceptor. Hunts your fighters and recon satellites inside its own landing zone before landing; only a clear sky sends it groundward.'],
     ['hulk', 'Hulk', null,
      'Armoured transport behind an energy shield. The shield falls at half health, and a landed hulk hits the ground twice as hard.'],
     ['dread', 'Dreadnaught', null,
