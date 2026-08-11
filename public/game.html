@@ -3045,6 +3045,30 @@
       }
     }
     ring.geometry.attributes.position.needsUpdate = true;
+
+    // Venn clipping: a rim segment that runs INSIDE another zone is not a
+    // boundary of anything, so it is dropped from the index - overlapping
+    // rings then read as one merged outline around the union of territory.
+    const index = ring.geometry.index.array;
+    let n = 0;
+    for (let i = 0; i < ZONE_SEG; i++) {
+      const am = ((i + 0.5) / ZONE_SEG) * Math.PI * 2;
+      zP.copy(bearing).multiplyScalar(Math.cos(ang))
+        .addScaledVector(zA, Math.sin(ang) * Math.cos(am))
+        .addScaledVector(zB, Math.sin(ang) * Math.sin(am)).normalize();
+      let hidden = false;
+      for (let j = 0; j < G.ships.length; j++) {
+        if (j === idx) continue;
+        const o = G.ships[j];
+        if (zP.angleTo(o.bearing) < o.ang - ZONE_HALF) { hidden = true; break; }
+      }
+      if (hidden) continue;
+      const a = i * 2, b = a + 1, c = ((i + 1) % ZONE_SEG) * 2, d = c + 1;
+      index[n++] = a; index[n++] = b; index[n++] = c;
+      index[n++] = b; index[n++] = d; index[n++] = c;
+    }
+    ring.geometry.index.needsUpdate = true;
+    ring.geometry.setDrawRange(0, n);
     ring.visible = true;
 
     // the ripple cap under the ring: same basis, graded cone angles
