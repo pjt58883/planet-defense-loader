@@ -131,15 +131,7 @@
     font-size:26px;letter-spacing:.34em;color:var(--ink);
     text-transform:uppercase;
   }
-  .start-sub{margin-top:10px;color:var(--ink-dim);letter-spacing:.16em}
-  .sizes{display:flex;gap:8px;margin:18px 0 4px}
-  .sizes button{flex:1;padding:10px 6px;line-height:1.5}
-  .sizes button .n{display:block;color:var(--ink-dim);margin-top:4px}
-  .sizes button[aria-pressed="true"]{
-    border-color:var(--hot);color:var(--hot);
-    background:rgba(255,180,84,.10);
-  }
-  .sizes button[aria-pressed="true"] .n{color:var(--hot)}
+  .start-sub{margin:10px 0 18px;color:var(--ink-dim);letter-spacing:.16em}
   .check{
     display:flex;align-items:center;justify-content:center;gap:10px;
     margin-top:14px;color:var(--ink-dim);cursor:pointer;user-select:none;
@@ -377,7 +369,6 @@
     .modal-title{font-size:17px;letter-spacing:.22em}
     .modal-row{font-size:13px;gap:16px}
     .start-title{font-size:19px;letter-spacing:.22em}
-    .sizes button{padding:8px 4px}
     .hplabel{font-size:20px;letter-spacing:.14em}
     .buildbar{right:10px;gap:6px}
     .buildbar .gold{font-size:15px}
@@ -404,7 +395,6 @@
     <button id="menuBtn" aria-expanded="false" aria-controls="menuPanel">Menu ▾</button>
     <div class="menu-panel" id="menuPanel">
       <button id="randBtn">New world</button>
-      <button id="gridBtn">Grid: 362</button>
       <button id="catalogBtn">Catalog</button>
       <span class="count" id="count"></span>
     </div>
@@ -437,12 +427,7 @@
 <div class="modal open" id="startModal">
   <div class="modal-card">
     <div class="start-title">Hex Defense</div>
-    <div class="start-sub">Choose a world</div>
-    <div class="sizes">
-      <button data-freq="0" aria-pressed="false">Small<span class="n">92 tiles</span></button>
-      <button data-freq="1" aria-pressed="true">Medium<span class="n">362 tiles</span></button>
-      <button data-freq="2" aria-pressed="false">Large<span class="n">812 tiles</span></button>
-    </div>
+    <div class="start-sub">Hold the line</div>
     <button id="startBtn">Start</button>
   </div>
 </div>
@@ -673,8 +658,10 @@
   }
 
   // ---------- tile state ----------
-  const FREQS = [3, 6, 9];
-  let freqIdx = 1;
+  //  One world size, always: subdividing the icosahedron six times gives
+  //  10*6^2 + 2 = 362 tiles, which every reach, footprint and zone radius
+  //  in the game is tuned against.
+  const FREQ = 6;
   let tiles = null, tileMesh = null;
   let cellType = null;               // one terrain id per cell; this IS the grid
   let cellGeo = null;                // that cell's generated triangles, cached
@@ -764,7 +751,7 @@
   }
 
   function makeGrid() {
-    tiles = buildTiles(FREQS[freqIdx], RADIUS);
+    tiles = buildTiles(FREQ, RADIUS);
     const N = tiles.cells.length;
     cellType = new Array(N).fill('plain');
     cellDead = new Uint8Array(N);
@@ -778,8 +765,6 @@
     fitCache.clear();
     refreshWater();
     rebuildTerrain();
-
-    document.getElementById('gridBtn').textContent = 'Grid: ' + tiles.cells.length;
   }
 
   // =====================================================================
@@ -794,8 +779,8 @@
   //  grows out of the face or sinks into it, but the face is never lifted off
   //  the ball, so tiles meet flush instead of shingling like scales.
   //
-  //  Sizes are multiples of the cell's inscribed radius, so a mountain looks
-  //  the same at 92 tiles as at 812 rather than becoming a spike or a bump.
+  //  Sizes are multiples of the cell's inscribed radius, so a mountain is
+  //  proportioned to its tile rather than to some absolute world scale.
   // =====================================================================
   const terrainMat = new THREE.MeshStandardMaterial({
     vertexColors: true, metalness: 0.15, roughness: 0.7, flatShading: true
@@ -4443,23 +4428,9 @@
   // ---------- start card ----------
   const startModal = document.getElementById('startModal');
   loadModels();
-  const sizeBtns = [...startModal.querySelectorAll('.sizes button')];
-  let chosenFreq = 1;
-
-  for (const b of sizeBtns) {
-    b.addEventListener('click', () => {
-      chosenFreq = +b.dataset.freq;
-      for (const o of sizeBtns) o.setAttribute('aria-pressed', o === b ? 'true' : 'false');
-    });
-  }
 
   startBtn.addEventListener('click', () => {
     startModal.classList.remove('open');
-    if (chosenFreq !== freqIdx) {                    // only rebuild if it changed
-      freqIdx = chosenFreq;
-      makeGrid();
-      randomise();
-    }
     G.started = true;
     resetGame();                                     // picks the first bearing
   });
@@ -4788,16 +4759,10 @@
   }
 
   // ---------- placement ----------
-  const gridBtn = document.getElementById('gridBtn');
   const randBtn = document.getElementById('randBtn');
   const countEl = document.getElementById('count');
   const hint = document.getElementById('hint');
 
-  gridBtn.addEventListener('click', () => {
-    freqIdx = (freqIdx + 1) % FREQS.length;
-    makeGrid();
-    randomise();                     // a new grid deserves a world on it
-  });
   randBtn.addEventListener('click', randomise);
   viewBtn.addEventListener('click', () => setView(!surfaceView));
 
