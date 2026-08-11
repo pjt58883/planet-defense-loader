@@ -1082,7 +1082,7 @@
   // else, so it can be swept from a test harness instead of guessed at.
   const BAL = {
     turretCost: 5,
-    range: 2, ceiling: 0.95, rate: 0.60, dmg: 11,
+    range: 4, ceiling: 0.95, rate: 0.60, dmg: 11,
     rockRange: 1, rockCeiling: 0.25,          // what a mountain tile adds
     cannonCost: 12,
     cannonRange: 1,                         // extra rings over a land turret
@@ -1172,11 +1172,13 @@
     jetCeiling: 1.05,
     jetReach:   4.0,                        // firing range, in tile inradii
     jetRate:    0.28,
-    jetDmg:     12,
+    jetDmg:     15,
     jetSize:    1.5,                        // length, in tile inradii
     shellSpeed: 1.15,                       // missile flight speed; it homes
     slugSpeed:  2.3,                        // railgun slug: straight-line, no homing
-    slugRange:  1.3,                        // sphere radii a slug flies before detonating
+    slugRange:  1.6,                        // sphere radii a slug flies before detonating;
+                                            // long enough for the doubled ring reach
+                                            // at full ceiling on the smallest worlds
     trailGap:   0.012,                      // distance between smoke puffs
     strayLife:  2.0,                        // seconds a shell with no target keeps going
     batteryCost: 18,
@@ -1191,7 +1193,7 @@
     // empty tubes come back one by one - slower per tube than the old
     // single launcher, ferocious in a full salvo.
     batteryTubes: 5,
-    batterySalvo: 0.18,                     // seconds between launches in a ripple
+    batterySalvo: 0.5,                      // seconds between launches in a ripple
     batteryRate: 3.0, batteryDmg: 30,       // per-tube reload; the payload is unchanged
     // ---- cloaking, and the eye that answers it. From cloakFrom on, every
     //      ship the motherships launch is cloaked: the model is hidden and
