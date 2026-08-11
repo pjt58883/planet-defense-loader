@@ -1203,6 +1203,7 @@
     //      outline betrays the approach. A recon satellite parked in orbit
     //      reveals every cloaked ship in the rings beneath it.
     cloakFrom: 15,
+    cloakSlow: 0.5,                         // the veil costs a hull half its speed
     satCost:   8,
     satRange:  3,                           // rings of sky one satellite uncloaks
     satAlt:    1.55,                        // stationary orbit, above every gun ceiling
@@ -3143,7 +3144,9 @@
     const E = BAL.enemies[spec.type];
     const tgt = tiles.cells[spec.ci].center;
     const alt = ship.dist - RADIUS;             // it leaves from the ship itself
-    const speed = spec.speed * E.speed;
+    // running the cloak costs half the drive: veiled ships creep
+    const cloaked = G.wave >= BAL.cloakFrom;
+    const speed = spec.speed * E.speed * (cloaked ? BAL.cloakSlow : 1);
     const sweep = ship.bearing.angleTo(tgt);
     const fall = alt / speed;                   // seconds to the ground
     aliens.push({
@@ -3164,7 +3167,7 @@
       speed,
       // late-war ships come cloaked: hull hidden, guns blind to them,
       // until a satellite's dome sweeps the veil off
-      cloak: G.wave >= BAL.cloakFrom,
+      cloak: cloaked,
       seen: false,
       alive: true
     });
@@ -3731,7 +3734,7 @@
     dart: 'Darts are fast enemy fighters that hunt down your fighters and recon satellites before landing.',
     hulk: 'Hulks are armoured transports behind energy shields. The shield falls at half health, and a landed hulk hits the ground twice as hard.',
     dread: 'Dreadnaughts are orbital bombardment ships. One stops at railgun height and shells your buildings with a railgun’s own reach — its wave does not end until it is shot down.',
-    cloak: 'The motherships now cloak every ship they launch: hulls vanish, and your units will not fire at what they cannot see — only the red outlines betray the approach. Park recon satellites in orbit to reveal everything beneath them.'
+    cloak: 'The motherships now cloak every ship they launch: hulls vanish, and your units will not fire at what they cannot see — only the red outlines betray the approach. The veil costs them half their speed. Park recon satellites in orbit to reveal everything beneath them.'
   };
   //  Most debuts introduce a unit; the cloak is a capability, and the
   //  card's header says so.
