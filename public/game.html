@@ -1076,7 +1076,7 @@
     inWave: false, breakLeft: 20, spawnTimer: 0, queue: [],
     ready: false, over: false, started: false, paused: false,
     build: null, bearing: null, nextComp: null,
-    shipDist: 1.55, landed: 0, spent: 0, ships: [],
+    shipDist: 3.10, landed: 0, spent: 0, ships: [],
     newShip: null,                 // a just-arrived mothership's bearing, for the camera
     // tools that unlock when the situation first demands them
     unlocked: { cannon: false, recovery: false, sat: false }
@@ -1095,12 +1095,10 @@
     // the first five waves run at half strength, so the opening is about
     // learning the ground rather than surviving the full flood
     alienN:     w => w <= 5 ? (10 + w * 6) / 2 : 10 + w * 6,
-    rampWaves:  22,                         // waves to reach the widest launch
     zoneMax:    1.45,                       // ~83 degrees, most of a hemisphere
     zoneRings:  2,                          // hex rings a freshly claimed zone covers
     zoneGrow:   0.055,                      // radians its radius adds per wave aboard
-    shipNear:   3.10,                       // mothership distance, sphere radii
-    shipFar:    6.60,
+    shipDist:   3.10,                       // mothership distance, sphere radii - held forever
     motherSize: 0.20,                       // length in sphere radii
     shipEvery:  5,                          // waves between each extra mothership
     shipSepMin: 0.85,                       // radians apart they try to stay
@@ -1207,7 +1205,8 @@
     cloakFrom: 15,
     satCost:   8,
     satRange:  3,                           // rings of sky one satellite uncloaks
-    satAlt:    1.55,                        // stationary orbit, above every ceiling
+    satAlt:    1.55,                        // stationary orbit, above every gun ceiling
+    satHp:     30,                          // but not above a dart's: it dies in five hits
     gunTurn:    4.2,                        // radians/s a railgun mount slews
     batteryTurn: 1.8,                       // the launcher swings heavier
     aimSettle:  0.05,                       // radians off-solution a mount may fire at
@@ -1617,6 +1616,10 @@
     for (const c of cover) radius = Math.max(radius, home.angleTo(tiles.cells[c].center));
     const s = { ci, home, radius, level: 1,
                 k: tiles.meanInr * 0.9 / SAT_LEN,
+                // the alien-target interface, so a dart's shells can chew
+                // it: dir/alt place it in space, pay 0 earns them nothing
+                dir: home, alt: BAL.satAlt,
+                hp: BAL.satHp, incoming: 0, alive: true, pay: 0,
                 spin: Math.random() * Math.PI * 2 };
     // the ground station that marks the claimed hex, flat on the tile
     mPos.copy(home).multiplyScalar(RADIUS - f.fit * 0.04);
@@ -1644,6 +1647,13 @@
   }
 
   function updateSats(dt) {
+    // bring out the dead first, so darts never shell a ghost
+    for (let i = satellites.length - 1; i >= 0; i--) {
+      if (satellites[i].alive) continue;
+      satAt.delete(satellites[i].ci);
+      satellites.splice(i, 1);
+      say('SATELLITE DOWN');
+    }
     if (satMesh) {
       for (let i = 0; i < satellites.length; i++) {
         const s = satellites[i];
@@ -1910,12 +1920,10 @@
   // =====================================================================
   //  THE MOTHERSHIP
   //
-  //  Difficulty is a distance now. The juggernaut warps in, sits off the
-  //  planet, and the break timer is the countdown to it opening its bays.
-  //  Early on it comes in close and can only throw vipers at a small cap of
-  //  ground. Later it launches from much further out, and the cone it can
-  //  reach widens until it covers most of a hemisphere. Nothing about the
-  //  turrets changes; the map they have to cover does.
+  //  The juggernaut warps in, parks at a fixed station off the planet,
+  //  and holds that exact point forever - the break timer is the
+  //  countdown to it opening its bays. What escalates is not where it
+  //  sits but what it sends and how wide its zone has grown.
   // =====================================================================
   //  From wave 5 a second juggernaut arrives, another every five after
   //  that. They pick separate bearings, so late waves are not one front you
@@ -1928,12 +1936,6 @@
   const MOTHER_LEN = 1.899;
   const moX = new THREE.Vector3(), moY = new THREE.Vector3(), moZ = new THREE.Vector3(),
         moBasis = new THREE.Matrix4(), moQ = new THREE.Quaternion();
-
-  // progress from the first wave to the widest launch, 0..1
-  function ramp(w) {
-    return Math.min(1, Math.max(0, (w - 1) / Math.max(1, BAL.rampWaves - 1)));
-  }
-  function shipDistFor(w)  { const t = ramp(w); return BAL.shipNear + (BAL.shipFar - BAL.shipNear) * t; }
 
   function placeMothers() {
     for (let i = 0; i < MAX_SHIPS; i++) {
@@ -2937,14 +2939,15 @@
     // everything about the coming wave is decided here, so the break shows
     // you the real thing rather than a placeholder
     const w = G.wave + 1;
-    G.shipDist = shipDistFor(w);
+    G.shipDist = BAL.shipDist;
     const want = shipCountFor(w);
 
     // A mothership's spot is claimed ONCE, when it warps in, and kept for
-    // the rest of the run. Only the zone changes: it opens at a couple of
-    // hex rings' reach and widens every wave the ship has been aboard,
-    // always centred on the bearing it locked on arrival. The pressure a
-    // ship applies is a place that deepens, not a front that wanders.
+    // the rest of the run - bearing AND distance, the same point in space
+    // forever. Only the zone changes: it opens at a couple of hex rings'
+    // reach and widens every wave the ship has been aboard, always centred
+    // on the bearing it locked on arrival. The pressure a ship applies is
+    // a place that deepens, not a front that wanders or backs away.
     const startAng = (BAL.zoneRings * 2 + 1) * tiles.meanInr;
     for (const s of G.ships) {
       s.ang = Math.min(BAL.zoneMax, s.ang0 + (w - s.born) * BAL.zoneGrow);
@@ -3000,7 +3003,6 @@
     G.nextComp = { counts };
 
     for (let i = 0; i < G.ships.length; i++) {
-      G.ships[i].dist = G.shipDist;
       drawZone(i, G.ships[i].bearing, G.ships[i].ang);
     }
     for (let i = G.ships.length; i < MAX_SHIPS; i++) {
@@ -3045,6 +3047,30 @@
       }
     }
     ring.geometry.attributes.position.needsUpdate = true;
+
+    // Venn clipping: a rim segment that runs INSIDE another zone is not a
+    // boundary of anything, so it is dropped from the index - overlapping
+    // rings then read as one merged outline around the union of territory.
+    const index = ring.geometry.index.array;
+    let n = 0;
+    for (let i = 0; i < ZONE_SEG; i++) {
+      const am = ((i + 0.5) / ZONE_SEG) * Math.PI * 2;
+      zP.copy(bearing).multiplyScalar(Math.cos(ang))
+        .addScaledVector(zA, Math.sin(ang) * Math.cos(am))
+        .addScaledVector(zB, Math.sin(ang) * Math.sin(am)).normalize();
+      let hidden = false;
+      for (let j = 0; j < G.ships.length; j++) {
+        if (j === idx) continue;
+        const o = G.ships[j];
+        if (zP.angleTo(o.bearing) < o.ang - ZONE_HALF) { hidden = true; break; }
+      }
+      if (hidden) continue;
+      const a = i * 2, b = a + 1, c = ((i + 1) % ZONE_SEG) * 2, d = c + 1;
+      index[n++] = a; index[n++] = b; index[n++] = c;
+      index[n++] = b; index[n++] = d; index[n++] = c;
+    }
+    ring.geometry.index.needsUpdate = true;
+    ring.geometry.setDrawRange(0, n);
     ring.visible = true;
 
     // the ripple cap under the ring: same basis, graded cone angles
@@ -3195,12 +3221,20 @@
       // matches its altitude, and shoots. Fighters elsewhere on the planet
       // are none of its business; over a clear zone it goes in to land.
       a.hunting = null;
-      if (a.type === 'dart' && fighters.length) {
+      if (a.type === 'dart' && (fighters.length || satellites.length)) {
         let tgt = null, near = Infinity;
         for (const jf of fighters) {
           if (jf.dir.angleTo(a.ship.bearing) > a.ship.ang) continue;
           const d = a.dir.angleTo(jf.dir);
           if (d < near) { near = d; tgt = jf; }
+        }
+        // recon satellites are prey of the same rank: the dart guns for
+        // whatever eye or escort is nearest inside its own zone
+        for (const s of satellites) {
+          if (s.hp - s.incoming <= 0) continue;
+          if (s.home.angleTo(a.ship.bearing) > a.ship.ang) continue;
+          const d = a.dir.angleTo(s.home);
+          if (d < near) { near = d; tgt = s; }
         }
         a.hunting = tgt;
         if (tgt) {
@@ -3685,7 +3719,7 @@
   //  Shown on the card before a type's first wave, so its debut is a
   //  briefing rather than a surprise.
   const ENEMY_INTRO = {
-    dart: 'Darts are fast enemy fighters that hunt down your fighters before landing.',
+    dart: 'Darts are fast enemy fighters that hunt down your fighters and recon satellites before landing.',
     hulk: 'Hulks are armoured transports behind energy shields. The shield falls at half health, and a landed hulk hits the ground twice as hard.',
     dread: 'Dreadnaughts are orbital bombardment ships. One stops at railgun height and shells your buildings with a railgun’s own reach — its wave does not end until it is shot down.',
     cloak: 'The motherships now cloak every ship they launch: hulls vanish, and your units will not fire at what they cannot see — only the red outlines betray the approach. Park recon satellites in orbit to reveal everything beneath them.'
@@ -4275,12 +4309,12 @@
     ['recovery', 'Recovery Team', BAL.recoveryCost,
      'The only thing that builds on dead ground. Digs a crossed-out tile back out, one wave of work per wave it has been lost, and defends itself with sidearms. Unlocks the first time a hex is lost.'],
     ['sat', 'Recon Satellite', BAL.satCost,
-     'Parks in stationary orbit over its hex, above every gun’s reach, and reveals cloaked ships in the rings beneath so your units can target them. No weapons of its own. Unlocks when the enemy starts cloaking.'],
+     'Parks in stationary orbit over its hex, above every gun’s reach, and reveals cloaked ships in the rings beneath so your units can target them. No weapons of its own, and darts hunt it. Unlocks when the enemy starts cloaking.'],
     ['side', 'The enemy'],
     ['dropship', 'Dropship', null,
      'The line trooper. Falls from its mothership toward a telegraphed tile; anything that lands kills the hex under it.'],
     ['dart', 'Dart', null,
-     'Fast interceptor. Hunts your fighters inside its own landing zone before landing; only a clear sky sends it groundward.'],
+     'Fast interceptor. Hunts your fighters and recon satellites inside its own landing zone before landing; only a clear sky sends it groundward.'],
     ['hulk', 'Hulk', null,
      'Armoured transport behind an energy shield. The shield falls at half health, and a landed hulk hits the ground twice as hard.'],
     ['dread', 'Dreadnaught', null,
