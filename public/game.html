@@ -1599,7 +1599,12 @@
   const satellites = [];
   const satAt = new Map();
   const SAT_LEN = 1.9;         // sentinel's widest extent, model units
-  let satMesh = null, satOutline = null;
+  //  The ground station that claims the hex beneath the orbiting bird.
+  //  Placeholder drum until satpad.glb lands in public/assets; measure its
+  //  widest footprint radius into SATPAD_R then.
+  const SATPAD_R = 1.0;
+  const SATPAD_FIT = 0.70;     // fraction of the tile the station covers
+  let satMesh = null, satOutline = null, satpadMesh = null, satpadOutline = null;
   const sQ = new THREE.Quaternion();
 
   function placeSat(ci) {
@@ -1613,6 +1618,11 @@
     const s = { ci, home, radius, level: 1,
                 k: tiles.meanInr * 0.9 / SAT_LEN,
                 spin: Math.random() * Math.PI * 2 };
+    // the ground station that marks the claimed hex, flat on the tile
+    mPos.copy(home).multiplyScalar(RADIUS - f.fit * 0.04);
+    mQuat.setFromUnitVectors(LOCAL_UP, home);
+    mScale.setScalar(f.fit * SATPAD_FIT / SATPAD_R);
+    s.padMat = new THREE.Matrix4().compose(mPos, mQuat, mScale);
     satellites.push(s);
     satAt.set(ci, s);
     return s;
@@ -1630,6 +1640,7 @@
     satellites.length = 0;
     satAt.clear();
     if (satMesh) { satMesh.count = 0; satOutline.count = 0; }
+    if (satpadMesh) { satpadMesh.count = 0; satpadOutline.count = 0; }
   }
 
   function updateSats(dt) {
@@ -1647,6 +1658,13 @@
       satMesh.count = satellites.length;
       if (satellites.length) satMesh.instanceMatrix.needsUpdate = true;
       mirrorOutline(satMesh, satOutline);
+    }
+    // every bird's ground station holds its hex below
+    if (satpadMesh) {
+      for (let i = 0; i < satellites.length; i++) satpadMesh.setMatrixAt(i, satellites[i].padMat);
+      satpadMesh.count = satellites.length;
+      if (satellites.length) satpadMesh.instanceMatrix.needsUpdate = true;
+      mirrorOutline(satpadMesh, satpadOutline);
     }
     // detection: any cloaked ship under a satellite's dome loses its veil
     for (const a of aliens) {
@@ -3917,6 +3935,8 @@
     jetpad:  ['/assets/jetpad.glb'],
     // the recon satellite: the orbital cube sentinel
     sat:     ['/assets/sat.glb'],
+    // its ground station, claiming the hex; placeholder until satpad.glb lands
+    satpad:  ['/assets/satpad.glb'],
     // the dreadnaught: hull and the bombardment cannon slung under it. The
     // cannon is a separate part so it can slew onto its target in flight.
     dread:    ['/assets/dread.glb'],
@@ -3934,7 +3954,7 @@
   //  Slots with no shipped GLB yet render as placeholders by design, so a
   //  missing file is expected and not worth an on-screen warning. New units
   //  sit here until their GLB lands in public/assets.
-  const OPTIONAL_MODELS = new Set([]);
+  const OPTIONAL_MODELS = new Set(['satpad']);
 
   //  Stand-ins for models that fail to load, built to the same footprints
   //  and pivots the real GLBs were measured at, so every scale factor and
@@ -3961,6 +3981,10 @@
       case 'sat':                                       // a solar array bar, centred
         geo = new THREE.BoxGeometry(SAT_LEN, 0.10, SAT_LEN * 0.28);
         color = 0x9ad0e0; break;
+      case 'satpad':                                    // ground-station drum, base at y=0
+        geo = new THREE.CylinderGeometry(SATPAD_R * 0.82, SATPAD_R, 0.34, 10);
+        geo.translate(0, 0.17, 0);
+        color = 0x4a6a72; break;
       case 'mother':
         geo = new THREE.CylinderGeometry(MOTHER_LEN * 0.18, MOTHER_LEN * 0.26, MOTHER_LEN, 8);
         geo.rotateX(-Math.PI / 2);                      // long axis on Z, nose -Z
@@ -4064,6 +4088,13 @@
     // the recon satellite, floating free: no grounding translate
     satMesh = instanced(parts.sat, MAX_TURRETS, true);
     satOutline = makeAllyOutline(parts.sat.geo, MAX_TURRETS);
+
+    // its ground station: base at y=0 like the other ground plates
+    parts.satpad.geo.computeBoundingBox();
+    const spb = parts.satpad.geo.boundingBox;
+    if (spb) parts.satpad.geo.translate(0, -spb.min.y, 0);
+    satpadMesh = instanced(parts.satpad, MAX_TURRETS, true);
+    satpadOutline = makeAllyOutline(parts.satpad.geo, MAX_TURRETS);
 
     // green twins for everything the player builds
     padOutline = makeAllyOutline(parts.pad.geo, MAX_TURRETS);
@@ -4194,7 +4225,7 @@
                        part(parts.gun, kc * CORE_GUN, PLAT_DECK + CORE_SEAT * kc)],
       jet:      () => [part(parts.jetpad, JETPAD_FIT), part(parts.jet, 1, 0.85)],
       recovery: () => [part(parts.recovery)],
-      sat:      () => [part(parts.sat)],
+      sat:      () => [part(parts.satpad, SATPAD_FIT), part(parts.sat, 0.5, 1.1)],
       dropship: () => [part(parts.viper)],
       dart:     () => [part(parts.dart)],
       hulk:     () => [part(parts.hulk)],
