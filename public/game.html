@@ -1599,11 +1599,11 @@
   const satellites = [];
   const satAt = new Map();
   const SAT_LEN = 1.9;         // sentinel's widest extent, model units
-  //  The ground station that claims the hex beneath the orbiting bird.
-  //  Placeholder drum until satpad.glb lands in public/assets; measure its
-  //  widest footprint radius into SATPAD_R then.
-  const SATPAD_R = 1.0;
+  //  The ground station that claims the hex beneath the orbiting bird:
+  //  the orbital relay station model, widest footprint radius in model units.
+  const SATPAD_R = 0.701;
   const SATPAD_FIT = 0.70;     // fraction of the tile the station covers
+
   let satMesh = null, satOutline = null, satpadMesh = null, satpadOutline = null;
   const sQ = new THREE.Quaternion();
 
