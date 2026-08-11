@@ -288,6 +288,8 @@
     text-align:center;font-size:19px;letter-spacing:.10em;
     font-variant-numeric:tabular-nums;margin-bottom:2px;
   }
+  /* tools the situation has not yet demanded stay off the shelf */
+  .buy.locked{display:none}
   .buy{
     display:flex;align-items:center;gap:10px;
     padding:5px 12px 5px 6px;
@@ -422,10 +424,10 @@
   <div class="stat gold">gold<b id="goldVal">25</b></div>
   <button id="buildBtn" class="buy" title="Railgun turret"><img id="img-turret" alt="Railgun turret"><span class="cost">5</span></button>
   <button id="jetBtn" class="buy" title="Fighter"><img id="img-jet" alt="Fighter"><span class="cost">10</span></button>
-  <button id="cannonBtn" class="buy" title="Sea cannon"><img id="img-cannon" alt="Sea cannon"><span class="cost">12</span></button>
+  <button id="cannonBtn" class="buy locked" title="Sea cannon"><img id="img-cannon" alt="Sea cannon"><span class="cost">12</span></button>
   <button id="batteryBtn" class="buy" title="Missile battery"><img id="img-battery" alt="Missile battery"><span class="cost">18</span></button>
-  <button id="recoveryBtn" class="buy" title="Recovery team"><img id="img-recovery" alt="Recovery team"><span class="cost">15</span></button>
-  <button id="satBtn" class="buy" title="Recon satellite"><img id="img-sat" alt="Recon satellite"><span class="cost">8</span></button>
+  <button id="recoveryBtn" class="buy locked" title="Recovery team"><img id="img-recovery" alt="Recovery team"><span class="cost">15</span></button>
+  <button id="satBtn" class="buy locked" title="Recon satellite"><img id="img-sat" alt="Recon satellite"><span class="cost">8</span></button>
 </div>
 
 <div class="hud bc">
@@ -1075,7 +1077,9 @@
     ready: false, over: false, started: false, paused: false,
     build: null, bearing: null, nextComp: null,
     shipDist: 1.55, landed: 0, spent: 0, ships: [],
-    newShip: null                  // a just-arrived mothership's bearing, for the camera
+    newShip: null,                 // a just-arrived mothership's bearing, for the camera
+    // tools that unlock when the situation first demands them
+    unlocked: { cannon: false, recovery: false, sat: false }
   };
 
   // Every number that decides whether the game is fair lives here and nowhere
@@ -2128,6 +2132,7 @@
     if (cellDead[ci]) return;
     cellDead[ci] = 1;
     cellDeadWave[ci] = G.wave;
+    unlock('recovery');              // the first scar opens the dig yard
 
     const f = tileFit(ci);
     const up = f.up;
@@ -2956,6 +2961,16 @@
     }
     G.ships.length = Math.min(G.ships.length, want);
 
+    // need unlocks the tool: water under any zone opens the sea cannon
+    // yard, and the cloaking era opens the satellite uplink - both during
+    // the break, so the answer is buyable before the problem descends
+    if (!G.unlocked.cannon) {
+      for (const s of G.ships) {
+        if (waterFrac(s.bearing, s.ang) > 0) { unlock('cannon'); break; }
+      }
+    }
+    if (w >= BAL.cloakFrom) unlock('sat');
+
     // every ship rolls the manifest its own age has earned; the card
     // prints the fleet's total
     const counts = { viper: 0, hulk: 0, dart: 0, dread: 0 };
@@ -3537,6 +3552,27 @@
     b.title += ' (' + cost + ' gold)';
   }
 
+  //  Need unlocks the tool. Three of the buildables stay off the shelf
+  //  until the game first poses the problem they answer.
+  const UNLOCKS = {
+    cannon:   { btn: 'cannonBtn',   msg: 'WATER IN THE DROP ZONE · SEA CANNON UNLOCKED' },
+    recovery: { btn: 'recoveryBtn', msg: 'GROUND LOST · RECOVERY TEAM UNLOCKED' },
+    sat:      { btn: 'satBtn',      msg: 'CLOAKED SIGNATURES · RECON SATELLITE UNLOCKED' }
+  };
+
+  function unlock(kind) {
+    if (G.unlocked[kind]) return;
+    G.unlocked[kind] = true;
+    document.getElementById(UNLOCKS[kind].btn).classList.remove('locked');
+    say(UNLOCKS[kind].msg);
+  }
+
+  function applyLocks() {
+    for (const k in UNLOCKS) {
+      document.getElementById(UNLOCKS[k].btn).classList.toggle('locked', !G.unlocked[k]);
+    }
+  }
+
   // a landing strobes BREACH! across the bar that just paid for it; the
   // reflow restart lets back-to-back landings each get their own flash
   const breachEl = document.getElementById('breachFlash');
@@ -3594,6 +3630,8 @@
   }
 
   function setBuild(mode) {
+    // a tool the situation has not demanded yet cannot be armed
+    if (mode && mode in G.unlocked && !G.unlocked[mode]) mode = null;
     G.build = mode || null;
     hint.classList.toggle('live', !!G.build);
     hint.textContent =
@@ -4200,13 +4238,13 @@
     ['jet', 'Fighter', BAL.jetCost,
      'Patrols a circle around its base hex and dives on anything inside it. Its landing pad claims the hex it flies from. Darts hunt it.'],
     ['cannon', 'Sea Cannon', BAL.cannonCost,
-     'The water build: a floating railgun with longer reach, a heavier slug and a higher ceiling than a land turret.'],
+     'The water build: a floating railgun with longer reach, a heavier slug and a higher ceiling than a land turret. Unlocks when a drop zone first covers water.'],
     ['battery', 'Missile Battery', BAL.batteryCost,
      'Five homing missiles on independent reloads: it ripples off a full salvo, each burst splashing everything near the hit, then the tubes come back one by one. Engages highest of all.'],
     ['recovery', 'Recovery Team', BAL.recoveryCost,
-     'The only thing that builds on dead ground. Digs a crossed-out tile back out, one wave of work per wave it has been lost, and defends itself with sidearms.'],
+     'The only thing that builds on dead ground. Digs a crossed-out tile back out, one wave of work per wave it has been lost, and defends itself with sidearms. Unlocks the first time a hex is lost.'],
     ['sat', 'Recon Satellite', BAL.satCost,
-     'Parks in stationary orbit over its hex, above every gun’s reach, and reveals cloaked ships in the rings beneath so your units can target them. No weapons of its own.'],
+     'Parks in stationary orbit over its hex, above every gun’s reach, and reveals cloaked ships in the rings beneath so your units can target them. No weapons of its own. Unlocks when the enemy starts cloaking.'],
     ['side', 'The enemy'],
     ['dropship', 'Dropship', null,
      'The line trooper. Falls from its mothership toward a telegraphed tile; anything that lands kills the hex under it.'],
@@ -4496,6 +4534,10 @@
     G.ships.length = 0;
     hideMothers();
     G.bearing = null;
+    // a fresh run re-locks the situational tools; the first pickBearing
+    // below may immediately re-open the cannon yard if the zone is wet
+    G.unlocked.cannon = G.unlocked.recovery = G.unlocked.sat = false;
+    applyLocks();
     pickBearing();
     G.newShip = null;                  // the founding ship is not "news"
     // open on the first drop zone, so nobody starts a run by hunting for it
