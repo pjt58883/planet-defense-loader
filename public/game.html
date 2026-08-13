@@ -1096,7 +1096,9 @@
     waveRamp:   w => Math.pow(1.10, w - 1),
     alienHp:    w => 46 * BAL.waveRamp(w),
     alienSpeed: w => 0.148 * BAL.waveRamp(w),  // sphere radii per second
-    spawnGap:   0.55,
+    spawnGap:   0.275,                      // seconds between launches; the
+                                            // whole fleet drains one queue, so
+                                            // this IS each ship's launch pace
     income:     w => 5 * w,                 // five per wave cleared
     // a landing costs a flat share of the planet's defense, whatever the
     // wave: the roster's dmg field IS that fraction. Reclaiming a hex
